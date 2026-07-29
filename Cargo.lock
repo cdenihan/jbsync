@@ -608,8 +608,8 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "rust-cli-release"
-version = "1.8.0"
-source = "git+https://github.com/cdenihan/rust-cli-release?tag=v1.8.0#127af9ea3d486e2c5389fa35d8ade4ee64ba87cb"
+version = "1.9.0"
+source = "git+https://github.com/cdenihan/rust-cli-release?tag=v1.9.0#3439c04d95a0a8c2999b65c4ae79b31eab1614bd"
 dependencies = [
  "dirs",
  "fs2",
