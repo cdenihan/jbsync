@@ -100,10 +100,8 @@ pub struct MachineIdentity {
 pub struct SyncConfig {
     pub version: u32,
     pub jetbrains: JetbrainsConfig,
-    pub bootstrap: BootstrapConfig,
     pub plugins: PluginsConfig,
     pub xml: XmlConfig,
-    pub text: TextConfig,
 }
 
 impl Default for SyncConfig {
@@ -111,10 +109,8 @@ impl Default for SyncConfig {
         Self {
             version: 1,
             jetbrains: JetbrainsConfig::default(),
-            bootstrap: BootstrapConfig::default(),
             plugins: PluginsConfig::default(),
             xml: XmlConfig::default(),
-            text: TextConfig::default(),
         }
     }
 }
@@ -154,13 +150,6 @@ impl Default for JetbrainsConfig {
             vmoptions_names: BTreeMap::new(),
         }
     }
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, Default)]
-#[serde(default)]
-pub struct BootstrapConfig {
-    pub source: Option<String>,
-    pub plugin_sources: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -237,30 +226,6 @@ fn default_element() -> String {
     "option".to_string()
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(default)]
-pub struct TextConfig {
-    pub use_defaults: bool,
-    pub omit: Vec<TextOmitRule>,
-}
-
-impl Default for TextConfig {
-    fn default() -> Self {
-        Self {
-            use_defaults: true,
-            omit: Vec::new(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, Default)]
-pub struct TextOmitRule {
-    pub file: String,
-    pub prefix: Option<String>,
-    pub contains: Option<String>,
-    pub regex: Option<String>,
-}
-
 // ---------------------------------------------------------------------------
 // Per-machine override: `machines/<id>.toml` inside the sync-data store
 // ---------------------------------------------------------------------------
@@ -270,7 +235,6 @@ pub struct TextOmitRule {
 pub struct MachineConfig {
     pub jetbrains: MachineJetbrainsConfig,
     pub xml: MachineXmlConfig,
-    pub text: MachineTextConfig,
 }
 
 impl MachineConfig {
@@ -289,23 +253,6 @@ pub struct MachineJetbrainsConfig {
 #[serde(default)]
 pub struct MachineXmlConfig {
     pub omit: Vec<XmlOmitRule>,
-    pub set: Vec<XmlSetRule>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, Default)]
-pub struct XmlSetRule {
-    pub file: String,
-    pub component: Option<String>,
-    #[serde(default = "default_element")]
-    pub element: String,
-    pub option: String,
-    pub value: String,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, Default)]
-#[serde(default)]
-pub struct MachineTextConfig {
-    pub omit: Vec<TextOmitRule>,
 }
 
 /// Sanitizes a raw machine identifier to `[A-Za-z0-9._-]`, matching the

@@ -103,8 +103,12 @@ enum Command {
     },
     /// Replace the running executable with the requested release.
     Update {
+        /// Release to install, e.g. 2026.07.29.2. Defaults to the newest.
         #[arg(long, default_value = "latest")]
         version: String,
+        /// Print the result as JSON instead of a sentence.
+        #[arg(long)]
+        json: bool,
     },
     /// Print a shell completion script.
     Completions {
@@ -210,9 +214,20 @@ pub fn run() -> anyhow::Result<()> {
                 println!("{action}");
             }
         }
-        Command::Update { version } => {
-            let summary = crate::update::update_current(&version, false)?;
-            println!("{}", serde_json::to_string(&summary)?);
+        Command::Update { version, json } => {
+            if !json {
+                if version == "latest" {
+                    eprintln!("Checking for the latest jbsync release...");
+                } else {
+                    eprintln!("Installing jbsync {version}...");
+                }
+            }
+            let summary = crate::update::update_current(&version, json)?;
+            if json {
+                println!("{}", serde_json::to_string(&summary)?);
+            } else {
+                println!("{}", summary.describe("jbsync"));
+            }
         }
         Command::Completions { shell } => {
             let mut command = Cli::command();

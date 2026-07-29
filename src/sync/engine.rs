@@ -100,10 +100,17 @@ impl Engine {
         ));
         backend.initialize()?;
 
-        let sync_config = SyncConfig::load(&workdir.join("sync.toml"))?;
+        let mut sync_config = SyncConfig::load(&workdir.join("sync.toml"))?;
         let machine = config::machine_id(local.machine.id.as_deref());
         let machine_config =
             MachineConfig::load(&workdir.join(format!("machines/{machine}.toml")))?;
+        // This machine's exclusions are folded in here so that discovery has a
+        // single list to consult, matching how `prune_rules` merges the two
+        // layers of omit rules.
+        sync_config
+            .jetbrains
+            .exclude
+            .extend(machine_config.jetbrains.exclude.clone());
 
         let root = local.jetbrains.root.as_deref().map_or_else(
             crate::platform::default_jetbrains_root,

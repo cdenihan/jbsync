@@ -28,8 +28,17 @@ CLion2026.2 (CLion)
   no changes
 
 1 conflict(s) resolved. Re-run with --prefer remote to flip the choice.
-Published: 3 file(s) at 8f21c0a4
+Committed: 3 file(s) at 8f21c0a4
 ```
+
+## Documentation
+
+| | |
+| --- | --- |
+| [Getting started](docs/getting-started.md) | Install, first machine, second machine, troubleshooting |
+| [Configuration](docs/configuration.md) | Every option, with complete annotated examples |
+| [How it works](docs/how-it-works.md) | What gets synced, and how merging works |
+| [Recipes](docs/recipes.md) | Short answers to common tasks |
 
 ## Install
 
@@ -217,6 +226,9 @@ option = "SHOW_INTENTION_BULB"
 
 `machines/<id>.toml` inside the store holds overrides for a single machine.
 
+Every key, with defaults and worked examples, is in the
+[configuration reference](docs/configuration.md).
+
 ## Commands
 
 | Command | Purpose |
@@ -233,6 +245,8 @@ option = "SHOW_INTENTION_BULB"
 
 Useful flags: `--dry-run`, `--verbose`, `--prefer local|remote|neither`,
 `--ide <selector>` (repeatable), `--collect-only`, `--install-plugins`.
+
+`jbsync update` prints a sentence; add `--json` for a machine-readable summary.
 
 ## Architecture
 
@@ -252,49 +266,12 @@ IDE config dirs ──▶ discovery ──▶ pruning ──▶ canonical XML �
 - `src/backend/` — where the store lives and how it travels.
 - `src/plugins.rs` — plugin descriptors, compatibility, and the manifest.
 
-### Other backends
-
-The engine never talks to Git. It asks a `Backend` for three views of the store
-— what this machine has, what everyone else has, and the last state both agreed
-on — merges them itself, and hands the result back. That is the smallest
-contract supporting a real three-way merge, and every candidate can provide it:
-
-| Backend | working copy | remote | base |
-| --- | --- | --- | --- |
-| Git (shipping) | the work tree | `origin/<branch>` | `git merge-base` |
-| Turso / libSQL | local replica | `SELECT` after pull | last-synced snapshot |
-| Custom HTTP | local cache | `GET /changes` | last-synced snapshot |
-| Convex | local cache | `query()` | last-synced snapshot |
-
-Backends that cannot name a common ancestor keep a copy of the last state they
-reconciled; that snapshot *is* the base. Reactivity is deliberately outside this
-trait — only Convex offers real push, so it belongs in a separate opt-in
-capability rather than forcing every backend to fake one. `repo.backend` in
-`config.toml` already selects the implementation.
-
-Git is invoked as a subprocess rather than linked as a library. That keeps the
-dependency budget at zero for this feature and, more usefully, means
-authentication is whatever already works for you: SSH agents, Keychain, Windows
-Credential Manager, `gh auth`, hardware keys.
-
-### Why there is no IDE plugin
-
-A companion plugin was researched and deliberately not built.
-
-The platform has no general "a setting changed" event. The deprecated Settings
-Repository plugin achieved it by registering a `StreamProvider` into the
-platform's own persistence pipeline — undocumented internals that churn between
-releases, as the move from `settings-repository` to today's `settingsSync`
-module illustrates. A plugin would also have to stay binary-compatible with
-every product line and every release, indefinitely, and pass Marketplace review
-on each update.
-
-The other direction is worse: there is no supported way to make a running IDE
-reload arbitrary settings that another process rewrote. Even JetBrains' own
-bundled sync largely waits for a restart.
-
-An external tool reaches the same freshness with none of that risk, which is why
-`jbsync` is a CLI you can run by hand, from a shell hook, or on a timer.
+Two decisions worth knowing about, both explained in
+[how it works](docs/how-it-works.md): the engine never talks to Git — it asks a
+`Backend` for three views of the store and merges them itself, so Turso, a
+custom HTTP service or Convex could replace it — and there is deliberately **no
+IDE plugin**, because the platform offers no supported way to observe a setting
+change or to make a running IDE reload one.
 
 ## Development
 

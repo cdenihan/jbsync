@@ -354,6 +354,71 @@ fn settings_the_ide_owns_survive_a_sync() {
     );
 }
 
+/// A machine that must keep one file to itself says so in `machines/<id>.toml`,
+/// which lives in the store so the exclusion follows the machine.
+#[test]
+fn a_machine_can_exclude_a_file_from_its_own_sync() {
+    let remote = bare_remote();
+    let machine = Machine::new(remote.path(), &["IntelliJIdea2026.2", "PyCharm2026.2"]);
+    std::fs::write(
+        machine.config_dir.join("config.toml"),
+        format!(
+            "[repo]\nremote = {:?}\n\n[jetbrains]\nroot = {:?}\n\n[machine]\nid = \"laptop\"\n",
+            remote.path().to_string_lossy(),
+            machine.jetbrains_root.to_string_lossy()
+        ),
+    )
+    .unwrap();
+
+    machine.write_option(
+        "IntelliJIdea2026.2",
+        "editor.xml",
+        "Editor",
+        &[("tabs", "4")],
+    );
+    // editor-font.xml syncs by default, so excluding it proves the machine
+    // override is consulted rather than the built-in exclusion list.
+    machine.write_option(
+        "IntelliJIdea2026.2",
+        "editor-font.xml",
+        "DefaultFontConfiguration",
+        &[("FONT_SIZE", "18")],
+    );
+
+    // Opening the engine creates the store, so the override can be placed
+    // before anything has been published.
+    let store = Engine::open(Some(machine.config_dir.clone()))
+        .unwrap()
+        .store_root()
+        .to_path_buf();
+    std::fs::create_dir_all(store.join("machines")).unwrap();
+    std::fs::write(
+        store.join("machines/laptop.toml"),
+        "[jetbrains]\nexclude = [\"options/editor-font.xml\"]\n",
+    )
+    .unwrap();
+
+    machine.sync();
+
+    assert!(
+        store.join("shared/options/editor.xml").exists(),
+        "an ordinary file still syncs"
+    );
+    assert!(
+        !store.join("shared/options/editor-font.xml").exists(),
+        "the excluded file must not reach the store"
+    );
+    assert_eq!(
+        machine.read_option(
+            "PyCharm2026.2",
+            "editor-font.xml",
+            "DefaultFontConfiguration/FONT_SIZE"
+        ),
+        None,
+        "and must not reach the other IDEs"
+    );
+}
+
 /// `status` is the command people run before trusting `sync`, so its report has
 /// to be the same one `sync` produces. It only is if a dry run buffers the
 /// writes it would make and later passes read them back.
