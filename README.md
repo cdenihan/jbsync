@@ -9,25 +9,27 @@ repository itself so you never have to manage one.
 
 ```
 $ jbsync sync
-machine mba  |  git (git@github.com:you/jetbrains-settings.git on main)
+mac  ·  git@github.com:you/jetbrains-settings.git on main
 
-Legend: < incoming   > outgoing   ! conflict
+2 settings into IDEs  ·  1 setting into the store  ·  1 conflict
 
-IntelliJIdea2026.2 (IntelliJ IDEA)
+IntelliJIdea2026.2  (IntelliJ IDEA)
   options/editor.xml
-      > CodeInsightSettings/AUTO_POPUP_JAVADOC_INFO    true
-      < Editor/fontSize                                13 -> 15
+    to IDE    Editor/fontSize                     13 -> 15
+    to store  CodeInsightSettings/AUTO_POPUP      false -> true
 
-PyCharm2026.2 (PyCharm)
+PyCharm2026.2  (PyCharm)
   options/editor.xml
-      < CodeInsightSettings/AUTO_POPUP_JAVADOC_INFO    true
+    to IDE    Editor/fontSize                     13 -> 15
   options/laf.xml
-      ! LafManager/themeId    here Islands Dark / there Light -> kept this machine's value
+    conflict  LafManager/laf/themeId
+              this machine   Islands Dark  <- kept
+              other machine  Light
 
-CLion2026.2 (CLion)
+CLion2026.2  (CLion)
   no changes
 
-1 conflict(s) resolved. Re-run with --prefer remote to flip the choice.
+1 conflict resolved in favour of this machine. Re-run with --prefer remote to flip the choice.
 Committed: 3 file(s) at 8f21c0a4
 ```
 

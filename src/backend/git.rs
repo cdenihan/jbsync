@@ -159,9 +159,12 @@ impl GitBackend {
 
 impl Backend for GitBackend {
     fn describe(&self) -> String {
+        // The store's path is deliberately left out: it belongs to
+        // `jbsync repo show`, and repeating it in every report header buried
+        // the part that actually changes.
         self.remote.as_ref().map_or_else(
-            || format!("git (local only: {})", self.workdir.display()),
-            |remote| format!("git ({remote} on {})", self.branch),
+            || "local store, no remote".to_string(),
+            |remote| format!("{remote} on {}", self.branch),
         )
     }
 

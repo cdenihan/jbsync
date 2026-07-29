@@ -45,11 +45,18 @@ impl Progress {
         if !self.enabled {
             return;
         }
+        let frame = self.frame(message);
         let mut stderr = std::io::stderr();
-        let padding = self.width.saturating_sub(message.len());
-        let _ = write!(stderr, "\r{message}{:padding$}", "");
+        let _ = write!(stderr, "{frame}");
         let _ = stderr.flush();
+    }
+
+    /// The bytes `step` would emit, and the width bookkeeping behind them.
+    /// Separated so tests can check the padding without writing to a terminal.
+    fn frame(&mut self, message: &str) -> String {
+        let padding = self.width.saturating_sub(message.len());
         self.width = message.len();
+        format!("\r{message}{:padding$}", "")
     }
 
     /// Clears the line, leaving the report to start on a clean row.
@@ -83,19 +90,14 @@ mod tests {
         progress.clear();
     }
 
+    /// A shorter message must blank what the previous, longer one left behind,
+    /// or the tail of the old line survives on screen.
     #[test]
-    fn width_tracks_the_last_message_when_enabled() {
-        let mut progress = Progress {
-            enabled: false,
-            width: 0,
-        };
-        // Force the bookkeeping path without touching the real terminal.
-        progress.enabled = true;
-        progress.step("hello");
+    fn a_shorter_message_erases_the_longer_one_before_it() {
+        let mut progress = Progress::silent();
+        assert_eq!(progress.frame("hello"), "\rhello");
         assert_eq!(progress.width, 5);
-        progress.step("hi");
+        assert_eq!(progress.frame("hi"), "\rhi   ");
         assert_eq!(progress.width, 2);
-        progress.clear();
-        assert_eq!(progress.width, 0);
     }
 }

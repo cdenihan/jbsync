@@ -242,7 +242,9 @@ Conflicts are reported precisely — which setting, which value on each side, an
 which won:
 
 ```
-! LafManager/themeId    here Islands Dark / there Light -> kept this machine's value
+conflict  LafManager/laf/themeId
+          this machine   Islands Dark  <- kept
+          other machine  Light
 ```
 
 Resolution is per run, not stored: `--prefer local` (default), `--prefer remote`,

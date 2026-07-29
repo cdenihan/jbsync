@@ -142,38 +142,59 @@ run is already in progress.
 ## Reading a report
 
 ```
-machine mac  |  git (git@github.com:you/jetbrains-settings.git on main)
+mac  ·  git@github.com:you/jetbrains-settings.git on main
 
-Legend: < incoming   > outgoing   ! conflict
+2 settings into IDEs  ·  1 setting into the store  ·  1 conflict
 
-IntelliJIdea2026.2 (IntelliJIdea)
+IntelliJIdea2026.2  (IntelliJ IDEA)
   options/editor.xml
-      > CodeInsightSettings/AUTO_POPUP_JAVADOC_INFO    true
-      < Editor/fontSize                                13 -> 15
+    to IDE    Editor/fontSize                     13 -> 15
+    to store  CodeInsightSettings/AUTO_POPUP      false -> true
 
-PyCharm2026.2 (PyCharm)
+PyCharm2026.2  (PyCharm)
+  options/editor.xml
+    to IDE    Editor/fontSize                     13 -> 15
   options/laf.xml
-      ! LafManager/themeId    here Islands Dark / there Light -> kept this machine's value
+    conflict  LafManager/laf/themeId
+              this machine   Islands Dark  <- kept
+              other machine  Light
 
-CLion2026.2 (CLion)
+CLion2026.2  (CLion)
   no changes
 
-1 conflict(s) resolved. Re-run with --prefer remote to flip the choice.
-Committed: 3 file(s) at 8f21c0a4 (local store only - `jbsync repo set <url>` to share)
+1 conflict resolved in favour of this machine. Re-run with --prefer remote to flip the choice.
+Committed: 3 file(s) at 8f21c0a4
 ```
 
-| Symbol | Meaning |
+Every row says **where the value is going**, so there is no legend to memorise:
+
+| Column | Meaning |
 | --- | --- |
-| `>` | This IDE had a value the shared store did not. It is being published. |
-| `<` | The store had a value this IDE did not. It is being written into the IDE. |
-| `!` | Both sides changed the same setting since they last agreed. Policy decided. |
+| `to IDE` | The store had a value this IDE did not. It is being written into the IDE. |
+| `to store` | This IDE had a value the store did not. It is being published. |
+| `conflict` | Both sides changed the same setting since they last agreed. |
+| `dropped` | Left out of the store for not being a user choice (`--verbose` only). |
 
 Settings are named `Component/setting`, which is where they live in the XML.
 `(default)` on either side of an arrow means the setting was absent — reverting
-something to its default value propagates as a removal, not as a value.
+something to its default propagates as a removal, not as a value.
 
-`--verbose` adds a `pruned` section listing what was left out of the shared
-store for not being a user choice, and why.
+The line under the header is the whole run in one glance. Counts separate
+**settings** from whole **files**, because a first sync moves dozens of files
+and no individual settings at all:
+
+```
+18 files into the store
+```
+
+Those bulk moves are counted rather than listed, so the one file that had a real
+change is not buried under forty identical rows. `--verbose` names them, and
+also lists everything pruned for not being a user choice.
+
+An IDE with nothing to do still appears, saying `no changes`, so the report
+doubles as confirmation that jbsync actually looked at it. Colour is used when
+the output is a terminal, and dropped when it is piped or when `NO_COLOR` is
+set.
 
 ## When something is not syncing
 

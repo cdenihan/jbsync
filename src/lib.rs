@@ -8,6 +8,7 @@ pub mod platform;
 pub mod plugins;
 pub mod progress;
 pub mod settings;
+pub mod style;
 pub mod sync;
 pub mod update;
 pub mod version;

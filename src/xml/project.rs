@@ -97,7 +97,13 @@ pub fn sugar(path: &str) -> String {
         match simplified {
             Some(value) => parts.push(value),
             None if raw == "@value" => {}
-            None => parts.push(raw.to_string()),
+            // `@themeId` is the setting's name to a reader; the `@` only tells
+            // the merge that it addresses an attribute.
+            None if raw.starts_with('@') => parts.push(raw[1..].to_string()),
+            // `laf#0` is the first and usually only `laf` element. The index
+            // matters to the merge and means nothing to a reader, so keep it
+            // only where it actually distinguishes siblings.
+            None => parts.push(raw.strip_suffix("#0").unwrap_or(raw).to_string()),
         }
     }
     if parts.is_empty() {
@@ -246,9 +252,21 @@ mod tests {
             sugar("component[name=Editor]/option[name=fonts]/map#0/entry[key=size]/@value"),
             "Editor/fonts/size"
         );
+        // A non-`value` attribute is the setting's name to a reader, so the
+        // `@` that tells the merge it addresses an attribute is dropped.
         assert_eq!(
             sugar("component[name=Registry]/entry[key=ide.ui]/@source"),
-            "Registry/ide.ui/@source"
+            "Registry/ide.ui/source"
+        );
+        // `#0` means "the first one"; it only earns its place when there is a
+        // sibling to distinguish it from.
+        assert_eq!(
+            sugar("component[name=LafManager]/laf#0/@themeId"),
+            "LafManager/laf/themeId"
+        );
+        assert_eq!(
+            sugar("component[name=LafManager]/laf#1/@themeId"),
+            "LafManager/laf#1/themeId"
         );
     }
 

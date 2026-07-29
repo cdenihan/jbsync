@@ -8,7 +8,8 @@ use crate::{
     paths::Paths,
     plugins,
     progress::Progress,
-    sync::{ConflictPolicy, Engine, SyncOptions, render},
+    style::Style,
+    sync::{ConflictPolicy, Engine, SyncOptions, render_with},
 };
 
 #[derive(Debug, Parser)]
@@ -142,7 +143,7 @@ pub fn run() -> anyhow::Result<()> {
                 ..SyncOptions::default()
             };
             let report = engine.sync_reporting(&options, &mut Progress::new())?;
-            print!("{}", render(&report, cli.verbose));
+            print!("{}", render_with(&report, cli.verbose, Style::auto()));
         }
         Command::Sync {
             dry_run,
@@ -162,7 +163,7 @@ pub fn run() -> anyhow::Result<()> {
                 install_plugins,
             };
             let report = engine.sync_reporting(&options, &mut Progress::new())?;
-            print!("{}", render(&report, cli.verbose));
+            print!("{}", render_with(&report, cli.verbose, Style::auto()));
         }
         Command::Ides => {
             let engine = Engine::open(cli.config_dir)?;

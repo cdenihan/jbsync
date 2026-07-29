@@ -4,6 +4,7 @@ use std::fmt::Write as _;
 
 use super::merge::{Change, Conflict, Side};
 use crate::settings::prune::Removal;
+use crate::style::Style;
 
 /// Everything that happened to one file, from one IDE's point of view.
 #[derive(Debug, Clone, Default)]
@@ -99,98 +100,346 @@ impl SyncReport {
     }
 }
 
-const SETTING_WIDTH: usize = 46;
+/// Width of the direction column. Sized to the longest label, so the setting
+/// names line up in a single ragged-right column that is easy to scan.
+const LABEL_WIDTH: usize = 8;
 
 fn describe(value: Option<&String>) -> &str {
     value.map_or("(default)", String::as_str)
 }
 
-fn render_change(output: &mut String, marker: char, change: &Change, indent: &str) {
-    let arrow = match (&change.from, &change.to) {
+/// `from -> to`, or just the new value when there was nothing before.
+fn transition(style: Style, from: Option<&String>, to: Option<&String>) -> String {
+    let arrow = style.dim("->");
+    match (from, to) {
         (None, Some(to)) => to.clone(),
-        (Some(from), None) => format!("{from} -> (default)"),
-        (from, to) => format!("{} -> {}", describe(from.as_ref()), describe(to.as_ref())),
-    };
+        (Some(from), None) => format!("{from} {arrow} {}", style.dim("(default)")),
+        (from, to) => format!("{} {arrow} {}", describe(from), describe(to)),
+    }
+}
+
+fn render_change(output: &mut String, label: &str, change: &Change, indent: &str, style: Style) {
+    // A whole-file change has no setting to name and no before/after value, so
+    // forcing it into those columns produced rows like
+    // "(file added)   updated locally", which read as jargon in both columns.
+    if whole_file(change) {
+        let _ = writeln!(
+            output,
+            "{indent}{label}  {}",
+            style.dim(whole_file_phrase(change))
+        );
+        return;
+    }
     let _ = writeln!(
         output,
-        "{indent}{marker} {:<SETTING_WIDTH$} {arrow}",
-        change.setting
+        "{indent}{:<LABEL_WIDTH$}  {:<34}  {}",
+        label,
+        change.setting,
+        transition(style, change.from.as_ref(), change.to.as_ref())
     );
 }
 
-fn render_conflict(output: &mut String, conflict: &Conflict, indent: &str) {
-    let resolution = match conflict.resolved_to {
-        Some(Side::Local) => "kept this machine's value",
-        Some(Side::Remote) => "took the incoming value",
-        None => "unresolved",
+fn whole_file_phrase(change: &Change) -> &'static str {
+    match (change.from.is_some(), change.to.is_some()) {
+        (false, true) => "the whole file, new here",
+        (true, false) => "the whole file, no longer synced",
+        _ => "the whole file",
+    }
+}
+
+/// Conflicts get several lines each. They are the part of a report a person
+/// most needs to actually understand, and the one-line form put four values and
+/// a verdict on the same row.
+fn render_conflict(output: &mut String, conflict: &Conflict, indent: &str, style: Style) {
+    let _ = writeln!(
+        output,
+        "{indent}{}  {}",
+        style.yellow(&format!("{:<LABEL_WIDTH$}", "conflict")),
+        style.bold(&conflict.setting)
+    );
+    let detail = format!("{indent}{:LABEL_WIDTH$}  ", "");
+    let kept = |side: Side| {
+        if conflict.resolved_to == Some(side) {
+            style.green("  <- kept")
+        } else {
+            String::new()
+        }
     };
     let _ = writeln!(
         output,
-        "{indent}! {:<SETTING_WIDTH$} here {} / there {} -> {resolution}",
-        conflict.setting,
+        "{detail}this machine   {}{}",
         describe(conflict.local.as_ref()),
+        kept(Side::Local)
+    );
+    let _ = writeln!(
+        output,
+        "{detail}other machine  {}{}",
         describe(conflict.remote.as_ref()),
+        kept(Side::Remote)
+    );
+    if conflict.resolved_to.is_none() {
+        let _ = writeln!(output, "{detail}{}", style.yellow("unresolved"));
+    }
+}
+
+/// A change with no projection address is about the file as a whole — it was
+/// added or removed, rather than having individual settings edited.
+fn whole_file(change: &Change) -> bool {
+    change.path.is_empty()
+}
+
+/// Files whose only news is that they arrived or left, counted rather than
+/// listed. The first sync of an IDE is dozens of these, and a page of identical
+/// rows hides the one file that had a real change.
+struct BulkFiles {
+    to_ide: Vec<String>,
+    to_store: Vec<String>,
+    removed: Vec<String>,
+}
+
+impl BulkFiles {
+    fn is_empty(&self) -> bool {
+        self.to_ide.is_empty() && self.to_store.is_empty() && self.removed.is_empty()
+    }
+}
+
+fn split_bulk(files: &[FileReport]) -> BulkFiles {
+    let mut bulk = BulkFiles {
+        to_ide: Vec::new(),
+        to_store: Vec::new(),
+        removed: Vec::new(),
+    };
+    for file in files {
+        if !file.conflicts.is_empty() {
+            continue;
+        }
+        let only_whole = |changes: &[Change]| !changes.is_empty() && changes.iter().all(whole_file);
+        let gone = |changes: &[Change]| changes.iter().all(|change| change.to.is_none());
+        if file.incoming.is_empty() && only_whole(&file.outgoing) {
+            if gone(&file.outgoing) {
+                bulk.removed.push(file.path.clone());
+            } else {
+                bulk.to_store.push(file.path.clone());
+            }
+        } else if file.outgoing.is_empty() && only_whole(&file.incoming) {
+            if gone(&file.incoming) {
+                bulk.removed.push(file.path.clone());
+            } else {
+                bulk.to_ide.push(file.path.clone());
+            }
+        }
+    }
+    bulk
+}
+
+fn render_bulk(output: &mut String, bulk: &BulkFiles, indent: &str, verbose: bool, style: Style) {
+    let mut line = |label: &str, paths: &[String], coloured: String| {
+        if paths.is_empty() {
+            return;
+        }
+        let _ = writeln!(
+            output,
+            "{indent}{coloured}  {} {label}",
+            plural(paths.len(), "file")
+        );
+        if verbose {
+            for path in paths {
+                let _ = writeln!(output, "{indent}{:LABEL_WIDTH$}  {}", "", style.dim(path));
+            }
+        }
+    };
+    line(
+        "copied into this IDE",
+        &bulk.to_ide,
+        style.cyan(&format!("{:<LABEL_WIDTH$}", "to IDE")),
+    );
+    line(
+        "published from this IDE",
+        &bulk.to_store,
+        style.green(&format!("{:<LABEL_WIDTH$}", "to store")),
+    );
+    line(
+        "no longer synced",
+        &bulk.removed,
+        style.dim(&format!("{:<LABEL_WIDTH$}", "removed")),
     );
 }
 
-fn render_files(output: &mut String, files: &[FileReport], indent: &str, verbose: bool) {
-    let shown = files.iter().filter(|file| {
-        if verbose {
+fn render_files(
+    output: &mut String,
+    files: &[FileReport],
+    indent: &str,
+    verbose: bool,
+    style: Style,
+) {
+    let bulk = split_bulk(files);
+    let bulked: std::collections::BTreeSet<&String> = bulk
+        .to_ide
+        .iter()
+        .chain(&bulk.to_store)
+        .chain(&bulk.removed)
+        .collect();
+
+    for file in files {
+        // Counted in the bulk summary below; listing them here as well would
+        // undo the point of collapsing them.
+        if bulked.contains(&file.path) {
+            continue;
+        }
+        let interesting = if verbose {
             file.has_detail()
         } else {
             !file.is_empty()
+        };
+        if !interesting {
+            continue;
         }
-    });
-    for file in shown {
-        let _ = writeln!(output, "{indent}{}", file.path);
-        let inner = format!("{indent}    ");
+        let _ = writeln!(output, "{indent}{}", style.bold(&file.path));
+        let inner = format!("{indent}  ");
         for change in &file.incoming {
-            render_change(output, '<', change, &inner);
+            render_change(
+                output,
+                &style.cyan(&format!("{:<LABEL_WIDTH$}", "to IDE")),
+                change,
+                &inner,
+                style,
+            );
         }
         for change in &file.outgoing {
-            render_change(output, '>', change, &inner);
+            render_change(
+                output,
+                &style.green(&format!("{:<LABEL_WIDTH$}", "to store")),
+                change,
+                &inner,
+                style,
+            );
         }
         for conflict in &file.conflicts {
-            render_conflict(output, conflict, &inner);
+            render_conflict(output, conflict, &inner, style);
         }
         if verbose {
             for removal in &file.pruned {
                 let _ = writeln!(
                     output,
-                    "{inner}- {:<SETTING_WIDTH$} {}",
-                    removal.path, removal.reason
+                    "{inner}{}  {:<34}  {}",
+                    style.dim(&format!("{:<LABEL_WIDTH$}", "dropped")),
+                    removal.path,
+                    style.dim(&removal.reason)
                 );
             }
         }
     }
+
+    if !bulk.is_empty() {
+        render_bulk(output, &bulk, indent, verbose, style);
+    }
+}
+
+/// Counts for the one-line summary, so the shape of a run is visible without
+/// reading every row.
+#[derive(Default)]
+struct Tally {
+    settings_in: usize,
+    settings_out: usize,
+    files_in: usize,
+    files_out: usize,
+    conflicts: usize,
+}
+
+fn tally(report: &SyncReport) -> Tally {
+    let mut tally = Tally {
+        conflicts: report.conflicts(),
+        ..Tally::default()
+    };
+    for file in report
+        .from_remote
+        .iter()
+        .chain(report.ides.iter().flat_map(|ide| &ide.files))
+    {
+        // Whole files and individual settings are different units. Adding them
+        // together made a first sync claim hundreds of "settings".
+        for change in &file.incoming {
+            if whole_file(change) {
+                tally.files_in += 1;
+            } else {
+                tally.settings_in += 1;
+            }
+        }
+        for change in &file.outgoing {
+            if whole_file(change) {
+                tally.files_out += 1;
+            } else {
+                tally.settings_out += 1;
+            }
+        }
+    }
+    tally
+}
+
+/// "1 setting" but "2 settings".
+fn plural(count: usize, noun: &str) -> String {
+    if count == 1 {
+        format!("{count} {noun}")
+    } else {
+        format!("{count} {noun}s")
+    }
 }
 
 /// Renders the report. `verbose` additionally lists settings that were dropped
-/// for not being user choices.
+/// for not being user choices, and names the files behind each bulk count.
 pub fn render(report: &SyncReport, verbose: bool) -> String {
+    render_with(report, verbose, Style::plain())
+}
+
+/// As [`render`], with ANSI styling when the destination is a terminal.
+pub fn render_with(report: &SyncReport, verbose: bool, style: Style) -> String {
     let mut output = String::new();
-    let _ = writeln!(
-        output,
-        "machine {}  |  {}{}",
-        report.machine,
-        report.backend,
-        if report.dry_run { "  |  dry run" } else { "" }
-    );
+    let mut header = format!("{}  ·  {}", report.machine, report.backend);
+    if report.dry_run {
+        header.push_str("  ·  dry run, nothing will be written");
+    }
+    let _ = writeln!(output, "{}", style.dim(&header));
 
     if !report.has_detail(verbose) {
         output.push_str("\nEverything is already in sync.\n");
         return output;
     }
 
-    output.push_str("\nLegend: < incoming   > outgoing   ! conflict");
-    if verbose {
-        output.push_str("   - pruned");
+    let counts = tally(report);
+    let conflicts = counts.conflicts;
+    let mut parts = Vec::new();
+    let into_ide = counts.settings_in + counts.files_in;
+    if into_ide > 0 {
+        let mut piece = Vec::new();
+        if counts.settings_in > 0 {
+            piece.push(plural(counts.settings_in, "setting"));
+        }
+        if counts.files_in > 0 {
+            piece.push(plural(counts.files_in, "file"));
+        }
+        parts.push(format!("{} into IDEs", piece.join(" and ")));
     }
-    output.push('\n');
+    let into_store = counts.settings_out + counts.files_out;
+    if into_store > 0 {
+        let mut piece = Vec::new();
+        if counts.settings_out > 0 {
+            piece.push(plural(counts.settings_out, "setting"));
+        }
+        if counts.files_out > 0 {
+            piece.push(plural(counts.files_out, "file"));
+        }
+        parts.push(format!("{} into the store", piece.join(" and ")));
+    }
+    if conflicts > 0 {
+        parts.push(plural(conflicts, "conflict"));
+    }
+    if !parts.is_empty() {
+        let _ = writeln!(output, "{}", style.bold(&parts.join("  ·  ")));
+    }
 
     if report.from_remote.iter().any(|file| !file.is_empty()) {
-        output.push_str("\nFrom other machines\n");
-        render_files(&mut output, &report.from_remote, "  ", verbose);
+        let _ = writeln!(output, "\n{}", style.bold("From other machines"));
+        render_files(&mut output, &report.from_remote, "  ", verbose, style);
     }
 
     // Every IDE is listed, even an idle one, so the report doubles as
@@ -199,11 +448,11 @@ pub fn render(report: &SyncReport, verbose: bool) -> String {
         let label = if ide.display_name.is_empty() || ide.display_name == ide.directory {
             ide.directory.clone()
         } else {
-            format!("{} ({})", ide.directory, ide.display_name)
+            format!("{}  ({})", ide.directory, ide.display_name)
         };
-        let _ = writeln!(output, "\n{label}");
+        let _ = writeln!(output, "\n{}", style.bold(&label));
         if let Some(reason) = &ide.skipped {
-            let _ = writeln!(output, "  skipped: {reason}");
+            let _ = writeln!(output, "  {} {reason}", style.dim("skipped:"));
             continue;
         }
         let interesting = if verbose {
@@ -212,25 +461,26 @@ pub fn render(report: &SyncReport, verbose: bool) -> String {
             !ide.is_empty()
         };
         if interesting {
-            render_files(&mut output, &ide.files, "  ", verbose);
+            render_files(&mut output, &ide.files, "  ", verbose, style);
         } else {
-            output.push_str("  no changes\n");
+            let _ = writeln!(output, "  {}", style.dim("no changes"));
         }
     }
 
     if !report.plugins.is_empty() {
-        output.push_str("\nPlugins\n");
+        let _ = writeln!(output, "\n{}", style.bold("Plugins"));
         for line in &report.plugins {
             let _ = writeln!(output, "  {line}");
         }
     }
 
-    let conflicts = report.conflicts();
     output.push('\n');
     if conflicts > 0 {
         let _ = writeln!(
             output,
-            "{conflicts} conflict(s) resolved. Re-run with --prefer remote to flip the choice."
+            "{} resolved in favour of this machine. \
+             Re-run with --prefer remote to flip the choice.",
+            plural(conflicts, "conflict")
         );
     }
     match &report.published {
@@ -286,11 +536,14 @@ mod tests {
             ..SyncReport::default()
         };
         let rendered = render(&report, false);
-        assert!(rendered.contains("IntelliJIdea2026.2 (IntelliJ IDEA)"));
+        assert!(rendered.contains("IntelliJIdea2026.2"));
         assert!(rendered.contains("options/editor.xml"));
-        assert!(rendered.contains("< Editor/fontSize"));
-        assert!(rendered.contains("> Editor/tabs"));
+        // Direction is stated in words, naming where the value is going.
+        assert!(rendered.contains("to IDE    Editor/fontSize"));
+        assert!(rendered.contains("to store  Editor/tabs"));
         assert!(rendered.contains("4 -> 2"));
+        assert!(rendered.contains("1 setting into IDEs"));
+        assert!(rendered.contains("1 setting into the store"));
     }
 
     #[test]
@@ -313,8 +566,11 @@ mod tests {
             ..SyncReport::default()
         };
         let rendered = render(&report, false);
-        assert!(rendered.contains("here 2 / there 8"));
-        assert!(rendered.contains("kept this machine's value"));
+        assert!(rendered.contains("conflict  Editor/tabs"));
+        assert!(rendered.contains("this machine   2"));
+        assert!(rendered.contains("other machine  8"));
+        assert!(rendered.contains("<- kept"));
+        assert!(rendered.contains("1 conflict resolved in favour of this machine"));
         assert!(rendered.contains("--prefer remote"));
     }
 
@@ -337,8 +593,78 @@ mod tests {
         };
         assert!(!render(&report, false).contains("ide.experimental.ui"));
         let verbose = render(&report, true);
-        assert!(verbose.contains("- Registry/ide.experimental.ui"));
+        assert!(verbose.contains("dropped   Registry/ide.experimental.ui"));
         assert!(verbose.contains("registry key set by the IDE"));
+    }
+
+    /// The first sync of an IDE is dozens of whole-file additions. Listing each
+    /// one buried the files that had real changes.
+    #[test]
+    fn bulk_file_additions_are_counted_not_listed() {
+        let whole = |to: Option<&str>| Change {
+            path: String::new(),
+            setting: "(file added)".to_string(),
+            from: None,
+            to: to.map(str::to_string),
+        };
+        let bulk: Vec<FileReport> = (0..12)
+            .map(|index| FileReport {
+                path: format!("options/file{index}.xml"),
+                outgoing: vec![whole(Some("updated locally"))],
+                ..FileReport::default()
+            })
+            .collect();
+        let report = SyncReport {
+            ides: vec![IdeReport {
+                directory: "PyCharm2026.2".to_string(),
+                files: bulk,
+                ..IdeReport::default()
+            }],
+            ..SyncReport::default()
+        };
+
+        let rendered = render(&report, false);
+        assert!(rendered.contains("12 files published from this IDE"));
+        assert!(
+            !rendered.contains("options/file3.xml"),
+            "individual paths are noise at this volume: {rendered}"
+        );
+        // Whole files are counted as files, never as settings.
+        assert!(rendered.contains("12 files into the store"));
+        assert!(!rendered.contains("setting"));
+
+        // --verbose is how you see exactly which files.
+        assert!(render(&report, true).contains("options/file3.xml"));
+    }
+
+    /// A file that changed as a whole *and* had a setting edited still lists
+    /// both, and the whole-file part reads as a sentence rather than as a
+    /// setting named "(file added)".
+    #[test]
+    fn a_whole_file_change_is_described_not_tabulated() {
+        let report = SyncReport {
+            ides: vec![IdeReport {
+                directory: "CLion2026.2".to_string(),
+                files: vec![FileReport {
+                    path: "options/laf.xml".to_string(),
+                    incoming: vec![change("LafManager/themeId", Some("Light"), Some("Dark"))],
+                    outgoing: vec![Change {
+                        path: String::new(),
+                        setting: "(file added)".to_string(),
+                        from: None,
+                        to: Some("updated locally".to_string()),
+                    }],
+                    ..FileReport::default()
+                }],
+                ..IdeReport::default()
+            }],
+            ..SyncReport::default()
+        };
+        let rendered = render(&report, false);
+        assert!(rendered.contains("the whole file, new here"), "{rendered}");
+        assert!(!rendered.contains("(file added)"), "{rendered}");
+        assert!(!rendered.contains("updated locally"), "{rendered}");
+        assert!(rendered.contains("to IDE    LafManager/themeId"));
     }
 
     #[test]
