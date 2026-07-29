@@ -75,6 +75,16 @@ impl Machine {
         self.sync_with(ConflictPolicy::PreferLocal)
     }
 
+    fn dry_run(&self) -> jbsync::sync::report::SyncReport {
+        let mut engine = Engine::open(Some(self.config_dir.clone())).unwrap();
+        engine
+            .sync(&SyncOptions {
+                dry_run: true,
+                ..SyncOptions::default()
+            })
+            .unwrap()
+    }
+
     fn sync_with(&self, policy: ConflictPolicy) -> jbsync::sync::report::SyncReport {
         let mut engine = Engine::open(Some(self.config_dir.clone())).unwrap();
         engine
@@ -342,4 +352,75 @@ fn settings_the_ide_owns_survive_a_sync() {
         !stored.contains("ide.experimental.ui"),
         "IDE-owned registry keys are not user choices"
     );
+}
+
+/// `status` is the command people run before trusting `sync`, so its report has
+/// to be the same one `sync` produces. It only is if a dry run buffers the
+/// writes it would make and later passes read them back.
+#[test]
+fn a_dry_run_predicts_exactly_what_a_real_sync_does() {
+    fn summarize(report: &jbsync::sync::report::SyncReport) -> Vec<String> {
+        let mut lines: Vec<String> = report
+            .ides
+            .iter()
+            .flat_map(|ide| {
+                ide.files.iter().flat_map(move |file| {
+                    let incoming = file.incoming.iter().map(move |change| {
+                        format!("< {} {} {}", ide.directory, file.path, change.setting)
+                    });
+                    let outgoing = file.outgoing.iter().map(move |change| {
+                        format!("> {} {} {}", ide.directory, file.path, change.setting)
+                    });
+                    incoming.chain(outgoing)
+                })
+            })
+            .collect();
+        lines.sort();
+        lines
+    }
+
+    let remote = bare_remote();
+    // Several IDEs holding different files is what forces multiple passes, and
+    // multiple passes are where a dry run used to diverge from a real one.
+    let machine = Machine::new(
+        remote.path(),
+        &["IntelliJIdea2026.2", "PyCharm2026.2", "CLion2026.2"],
+    );
+    machine.write_option(
+        "IntelliJIdea2026.2",
+        "editor.xml",
+        "Editor",
+        &[("tabs", "2")],
+    );
+    machine.write_option(
+        "PyCharm2026.2",
+        "laf.xml",
+        "LafManager",
+        &[("theme", "Dark")],
+    );
+    machine.write_option("CLion2026.2", "debugger.xml", "Debugger", &[("steps", "9")]);
+
+    let predicted = summarize(&machine.dry_run());
+    let actual = summarize(&machine.sync());
+
+    assert_eq!(
+        predicted, actual,
+        "a dry run must report the same changes the real sync makes"
+    );
+    assert!(
+        !predicted.is_empty(),
+        "the fixture should produce changes to compare"
+    );
+    // And nothing contradictory: no file both gains and loses the same setting.
+    for line in &predicted {
+        let flipped = if let Some(rest) = line.strip_prefix("< ") {
+            format!("> {rest}")
+        } else {
+            format!("< {}", &line[2..])
+        };
+        assert!(
+            !predicted.contains(&flipped),
+            "{line} is reported in both directions"
+        );
+    }
 }

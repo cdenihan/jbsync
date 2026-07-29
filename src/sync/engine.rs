@@ -244,9 +244,17 @@ impl Engine {
         if !options.dry_run && !report.is_empty() {
             let published = self.backend.publish(&options.message)?;
             report.published = match published {
-                Published::Committed { files, cursor } => {
-                    Some(format!("{files} file(s) at {}", short(&cursor)))
-                }
+                Published::Committed { files, cursor } => Some(format!(
+                    "{files} file(s) at {}{}",
+                    short(&cursor),
+                    // Without a remote the commit never leaves this machine,
+                    // and saying "published" would imply otherwise.
+                    if self.local.repo.remote.is_some() {
+                        ""
+                    } else {
+                        " (local store only - `jbsync repo set <url>` to share)"
+                    }
+                )),
                 Published::Unchanged => None,
             };
         }
@@ -493,7 +501,11 @@ impl Engine {
                 &self.sync_config,
             ))
         });
-        let raw = std::fs::read(&ide_file).ok();
+        // Through staging, not the filesystem: a dry run buffers the writes it
+        // would make to this IDE, and later passes must see them. Reading the
+        // disk directly would leave the IDE looking frozen while the store
+        // moved on, so a second pass would conclude the IDE had deleted files.
+        let raw = staging.read(&ide_file);
         let (local_view, removed) = raw
             .as_ref()
             .map_or((None, Vec::new()), |bytes| self.store_view(relative, bytes));

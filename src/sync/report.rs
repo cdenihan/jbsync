@@ -227,7 +227,7 @@ pub fn render(report: &SyncReport, verbose: bool) -> String {
     }
     match &report.published {
         Some(summary) if !report.dry_run => {
-            let _ = writeln!(output, "Published: {summary}");
+            let _ = writeln!(output, "Committed: {summary}");
         }
         _ if report.dry_run => output.push_str("Nothing was written.\n"),
         _ => {}
