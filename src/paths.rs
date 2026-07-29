@@ -4,8 +4,7 @@
 
 use std::path::{Path, PathBuf};
 
-use rust_cli_release::{LockedJsonStore, SecureDir};
-use serde::{Deserialize, Serialize};
+use rust_cli_release::{LockGuard, SecureDir};
 
 use crate::{config::RepoConfig, error::Result};
 
@@ -37,25 +36,27 @@ impl Paths {
             .unwrap_or_else(|| self.app_dir.root().join("data"))
     }
 
-    pub fn state_store(&self) -> LockedJsonStore<StateFile> {
-        LockedJsonStore::new(self.app_dir.clone(), "state.json")
+    /// Per-IDE snapshots of the last state that IDE and the store agreed on.
+    /// This is the `base` of every three-way merge, so it has to hold real
+    /// content rather than a digest.
+    pub fn base_dir(&self) -> PathBuf {
+        self.app_dir.root().join("base")
     }
-}
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
-pub struct StateFile {
-    #[serde(default = "state_version")]
-    pub version: u32,
-    #[serde(default)]
-    pub machine: String,
-    /// IDE config directory path -> relative file path -> SHA-256 digest, as
-    /// of the last successful sync.
-    #[serde(default)]
-    pub files: std::collections::BTreeMap<String, std::collections::BTreeMap<String, String>>,
-}
+    /// Timestamped copies of IDE files, taken before they are overwritten.
+    pub fn backups_dir(&self) -> PathBuf {
+        self.app_dir.root().join("backups")
+    }
 
-fn state_version() -> u32 {
-    1
+    /// Takes the lock that serializes whole syncs.
+    ///
+    /// A sync reads the IDEs, rewrites the store, and writes back — two runs
+    /// overlapping (a shell and an editor hook, say) could interleave those
+    /// steps and publish a half-merged result. Reports `None` rather than
+    /// waiting, so the caller can say a run is already in progress.
+    pub fn try_lock(&self) -> Result<Option<LockGuard>> {
+        Ok(self.app_dir.try_lock_exclusive("sync.lock")?)
+    }
 }
 
 #[cfg(test)]

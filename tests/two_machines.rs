@@ -1,0 +1,345 @@
+//! End-to-end behaviour across two machines and several IDEs.
+//!
+//! These are the scenarios the design exists for: two IDEs changing different
+//! settings in the same file must both get their way, and two machines
+//! changing the *same* setting must produce one clearly reported conflict
+//! rather than a corrupted file.
+
+use std::{
+    fmt::Write as _,
+    path::{Path, PathBuf},
+};
+
+use jbsync::{
+    sync::{ConflictPolicy, Engine, SyncOptions},
+    xml::{dom, project},
+};
+
+/// A JetBrains config root with one or more IDE directories in it.
+struct Machine {
+    _home: tempfile::TempDir,
+    config_dir: PathBuf,
+    jetbrains_root: PathBuf,
+}
+
+impl Machine {
+    fn new(remote: &Path, ides: &[&str]) -> Self {
+        let home = tempfile::tempdir().unwrap();
+        let config_dir = home.path().join("jbsync");
+        let jetbrains_root = home.path().join("JetBrains");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        for ide in ides {
+            std::fs::create_dir_all(jetbrains_root.join(ide).join("options")).unwrap();
+        }
+        std::fs::write(
+            config_dir.join("config.toml"),
+            format!(
+                "[repo]\nremote = {:?}\n\n[jetbrains]\nroot = {:?}\n",
+                remote.to_string_lossy(),
+                jetbrains_root.to_string_lossy()
+            ),
+        )
+        .unwrap();
+        Self {
+            _home: home,
+            config_dir,
+            jetbrains_root,
+        }
+    }
+
+    fn write_option(&self, ide: &str, file: &str, component: &str, options: &[(&str, &str)]) {
+        let mut body = String::new();
+        for (name, value) in options {
+            let _ = writeln!(body, "    <option name=\"{name}\" value=\"{value}\" />");
+        }
+        let document = format!(
+            "<?xml version='1.0' encoding='utf-8'?>\n<application>\n  <component name=\"{component}\">\n{body}  </component>\n</application>"
+        );
+        let path = self.jetbrains_root.join(ide).join("options").join(file);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, document).unwrap();
+    }
+
+    /// The value of one setting as the IDE currently has it on disk.
+    fn read_option(&self, ide: &str, file: &str, setting: &str) -> Option<String> {
+        let path = self.jetbrains_root.join(ide).join("options").join(file);
+        let text = std::fs::read_to_string(path).ok()?;
+        let document = dom::parse(&text).ok()?;
+        project::project(&document)
+            .into_iter()
+            .find(|(address, _)| project::sugar(address) == setting)
+            .map(|(_, value)| value)
+    }
+
+    fn sync(&self) -> jbsync::sync::report::SyncReport {
+        self.sync_with(ConflictPolicy::PreferLocal)
+    }
+
+    fn sync_with(&self, policy: ConflictPolicy) -> jbsync::sync::report::SyncReport {
+        let mut engine = Engine::open(Some(self.config_dir.clone())).unwrap();
+        engine
+            .sync(&SyncOptions {
+                policy,
+                ..SyncOptions::default()
+            })
+            .unwrap()
+    }
+}
+
+fn bare_remote() -> tempfile::TempDir {
+    let directory = tempfile::tempdir().unwrap();
+    let status = std::process::Command::new("git")
+        .args(["init", "--bare", "-b", "main"])
+        .arg(directory.path())
+        .status()
+        .expect("git must be installed to run these tests");
+    assert!(status.success());
+    directory
+}
+
+#[test]
+fn two_ides_changing_different_settings_both_win() {
+    let remote = bare_remote();
+    let machine = Machine::new(remote.path(), &["IntelliJIdea2026.2", "PyCharm2026.2"]);
+
+    // Start both IDEs from the same settings, so the baseline is unambiguous.
+    for ide in ["IntelliJIdea2026.2", "PyCharm2026.2"] {
+        machine.write_option(
+            ide,
+            "editor.xml",
+            "Editor",
+            &[("tabs", "4"), ("wrap", "true")],
+        );
+    }
+    let baseline = machine.sync();
+    assert_eq!(
+        baseline.conflicts(),
+        0,
+        "identical settings cannot conflict"
+    );
+
+    // IntelliJ changes only `tabs`; PyCharm changes only `wrap`.
+    machine.write_option(
+        "IntelliJIdea2026.2",
+        "editor.xml",
+        "Editor",
+        &[("tabs", "8"), ("wrap", "true")],
+    );
+    machine.write_option(
+        "PyCharm2026.2",
+        "editor.xml",
+        "Editor",
+        &[("tabs", "4"), ("wrap", "false")],
+    );
+    let report = machine.sync();
+
+    assert_eq!(report.conflicts(), 0, "different settings must not collide");
+    for ide in ["IntelliJIdea2026.2", "PyCharm2026.2"] {
+        assert_eq!(
+            machine
+                .read_option(ide, "editor.xml", "Editor/tabs")
+                .as_deref(),
+            Some("8"),
+            "{ide} should have IntelliJ's tab change"
+        );
+        assert_eq!(
+            machine
+                .read_option(ide, "editor.xml", "Editor/wrap")
+                .as_deref(),
+            Some("false"),
+            "{ide} should have PyCharm's wrap change"
+        );
+    }
+}
+
+#[test]
+fn a_second_machine_adopts_the_shared_settings() {
+    let remote = bare_remote();
+    let first = Machine::new(remote.path(), &["IntelliJIdea2026.2"]);
+    first.write_option(
+        "IntelliJIdea2026.2",
+        "editor.xml",
+        "Editor",
+        &[("tabs", "2"), ("fontSize", "15")],
+    );
+    first.sync();
+
+    // A brand new machine, with the IDE present but no settings of its own.
+    let second = Machine::new(remote.path(), &["IntelliJIdea2026.2"]);
+    let report = second.sync();
+
+    assert_eq!(
+        second
+            .read_option("IntelliJIdea2026.2", "editor.xml", "Editor/tabs")
+            .as_deref(),
+        Some("2")
+    );
+    assert_eq!(
+        second
+            .read_option("IntelliJIdea2026.2", "editor.xml", "Editor/fontSize")
+            .as_deref(),
+        Some("15")
+    );
+    assert_eq!(report.conflicts(), 0, "adoption is not a conflict");
+}
+
+#[test]
+fn the_same_setting_changed_on_two_machines_is_one_reported_conflict() {
+    let remote = bare_remote();
+    let first = Machine::new(remote.path(), &["IntelliJIdea2026.2"]);
+    first.write_option(
+        "IntelliJIdea2026.2",
+        "editor.xml",
+        "Editor",
+        &[("tabs", "2")],
+    );
+    first.sync();
+
+    let second = Machine::new(remote.path(), &["IntelliJIdea2026.2"]);
+    second.sync();
+
+    // Both machines now change the same setting, differently.
+    first.write_option(
+        "IntelliJIdea2026.2",
+        "editor.xml",
+        "Editor",
+        &[("tabs", "4")],
+    );
+    first.sync();
+    second.write_option(
+        "IntelliJIdea2026.2",
+        "editor.xml",
+        "Editor",
+        &[("tabs", "8")],
+    );
+    let report = second.sync();
+
+    assert_eq!(
+        report.conflicts(),
+        1,
+        "exactly one conflict, named precisely"
+    );
+    let conflict = report
+        .from_remote
+        .iter()
+        .flat_map(|file| &file.conflicts)
+        .chain(
+            report
+                .ides
+                .iter()
+                .flat_map(|ide| &ide.files)
+                .flat_map(|file| &file.conflicts),
+        )
+        .next()
+        .expect("the conflict should be reported");
+    assert_eq!(conflict.setting, "Editor/tabs");
+
+    // Default policy keeps the value on the machine running the sync.
+    assert_eq!(
+        second
+            .read_option("IntelliJIdea2026.2", "editor.xml", "Editor/tabs")
+            .as_deref(),
+        Some("8")
+    );
+}
+
+#[test]
+fn preferring_remote_takes_the_incoming_value_instead() {
+    let remote = bare_remote();
+    let first = Machine::new(remote.path(), &["IntelliJIdea2026.2"]);
+    first.write_option(
+        "IntelliJIdea2026.2",
+        "editor.xml",
+        "Editor",
+        &[("tabs", "2")],
+    );
+    first.sync();
+
+    let second = Machine::new(remote.path(), &["IntelliJIdea2026.2"]);
+    second.sync();
+
+    first.write_option(
+        "IntelliJIdea2026.2",
+        "editor.xml",
+        "Editor",
+        &[("tabs", "4")],
+    );
+    first.sync();
+    second.write_option(
+        "IntelliJIdea2026.2",
+        "editor.xml",
+        "Editor",
+        &[("tabs", "8")],
+    );
+    second.sync_with(ConflictPolicy::PreferRemote);
+
+    assert_eq!(
+        second
+            .read_option("IntelliJIdea2026.2", "editor.xml", "Editor/tabs")
+            .as_deref(),
+        Some("4")
+    );
+}
+
+#[test]
+fn a_settled_sync_reports_nothing_and_stays_settled() {
+    let remote = bare_remote();
+    let machine = Machine::new(remote.path(), &["IntelliJIdea2026.2", "CLion2026.2"]);
+    machine.write_option(
+        "IntelliJIdea2026.2",
+        "editor.xml",
+        "Editor",
+        &[("tabs", "2")],
+    );
+
+    machine.sync();
+    let second_run = machine.sync();
+    assert!(
+        second_run.is_empty(),
+        "a sync with nothing to do must converge in one run"
+    );
+}
+
+#[test]
+fn settings_the_ide_owns_survive_a_sync() {
+    let remote = bare_remote();
+    let machine = Machine::new(remote.path(), &["IntelliJIdea2026.2", "CLion2026.2"]);
+
+    // ide.general.xml carries a real setting plus registry keys the IDE set for
+    // itself. The registry keys must not reach the store, but must also not be
+    // stripped out of the IDE's own file.
+    let path = machine
+        .jetbrains_root
+        .join("IntelliJIdea2026.2/options/ide.general.xml");
+    std::fs::write(
+        &path,
+        r#"<?xml version='1.0' encoding='utf-8'?>
+<application>
+  <component name="GeneralSettings">
+    <option name="reopenLastProject" value="false" />
+  </component>
+  <component name="Registry">
+    <entry key="ide.experimental.ui" value="true" source="SYSTEM" />
+  </component>
+</application>"#,
+    )
+    .unwrap();
+    machine.write_option("CLion2026.2", "editor.xml", "Editor", &[("tabs", "2")]);
+    machine.sync();
+
+    let after = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        after.contains("ide.experimental.ui"),
+        "pruning decides what is shared, not what the IDE keeps"
+    );
+
+    let engine = Engine::open(Some(machine.config_dir.clone())).unwrap();
+    let stored =
+        std::fs::read_to_string(engine.store_root().join("shared/options/ide.general.xml"))
+            .unwrap();
+    assert!(stored.contains("reopenLastProject"), "real settings sync");
+    assert!(
+        !stored.contains("ide.experimental.ui"),
+        "IDE-owned registry keys are not user choices"
+    );
+}

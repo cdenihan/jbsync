@@ -1,0 +1,27 @@
+<application>
+  <component name="FileEditorProviderManager">{}</component>
+  <component name="LangManager">
+    <option name="languageName" value="JAVA" />
+    <languageToProjectMap>
+      <entry key="JAVA" value="$USER_HOME$/Library/Caches/JetBrains/Example/demo/LearningProject" />
+    </languageToProjectMap>
+  </component>
+  <component name="NotRoamableUiSettings">
+    <option name="fontSize" value="13.0" />
+    <option name="presentationModeIdeScale" value="1.75" />
+  </component>
+  <component name="PropertyService"><![CDATA[{
+  "keyToString": {
+    "ExampleTreeView.TREE_SCROLL_BAR_HORIZONTAL": "19",
+    "NewProjectWizard.gradleDslState": "GROOVY",
+    "RunOnceActivity.ExampleMigration.2026.1": "true",
+    "settings.editor.selected.configurable": "preferences.general"
+  }
+}]]></component>
+  <component name="RecentsManager">
+    <key name="ExampleRecentKeys">
+      <recent name="com.example.one" />
+      <recent name="com.example.two" />
+    </key>
+  </component>
+</application>

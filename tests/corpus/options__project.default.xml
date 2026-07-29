@@ -1,0 +1,85 @@
+<?xml version='1.0' encoding='utf-8'?>
+<application>
+  <component name="ProjectManager">
+    <defaultProject>
+      <component name="AutoImportSettings">
+        <option name="autoReloadType" value="SELECTIVE" />
+      </component>
+      <component name="FormatOnSaveOptions">
+        <option name="myRunOnSave" value="true" />
+      </component>
+      <component name="MaliciousPackageCheckinHandlerState">
+        <option name="packageCheck" value="true" />
+      </component>
+      <component name="OptimizeOnSaveOptions">
+        <option name="myRunOnSave" value="true" />
+      </component>
+      <component name="ProjectInspectionProfilesVisibleTreeState">
+        <entry key="Project Default">
+          <profile-state>
+            <selected-state>
+              <State>
+                <id>User defined</id>
+              </State>
+            </selected-state>
+          </profile-state>
+        </entry>
+      </component>
+      <component name="PropertiesComponent">{
+  "keyToString": {
+    "node.js.selected.package.eslint": "(autodetect)",
+    "node.js.selected.package.jshint": "",
+    "node.js.selected.package.standard": "",
+    "rearrange.code.on.save": "true",
+    "settings.editor.selected.configurable": "settings.sync"
+  }
+}</component>
+      <component name="UpdateCopyrightCheckinHandler">
+        <option name="UPDATE_COPYRIGHT" value="true" />
+      </component>
+      <component name="VcsManagerConfiguration">
+        <option name="CLEAR_INITIAL_COMMIT_MESSAGE" value="true" />
+        <option name="OPTIMIZE_IMPORTS_BEFORE_PROJECT_COMMIT" value="true" />
+        <option name="REFORMAT_BEFORE_PROJECT_COMMIT" value="true" />
+        <option name="REARRANGE_BEFORE_PROJECT_COMMIT" value="true" />
+      </component>
+      <component name="WindowStateProjectService">
+        <state x="265" y="71" key="SettingsEditor" timestamp="1785280428200">
+          <screen x="0" y="33" width="1512" height="874" />
+        </state>
+        <state x="265" y="71" key="SettingsEditor/0.33.1512.872" timestamp="1785279734243" />
+        <state x="265" y="71" key="SettingsEditor/0.33.1512.874" timestamp="1785280428200" />
+        <state x="356" y="75" width="800" height="754" key="new project wizard" timestamp="1785280369046">
+          <screen x="0" y="33" width="1512" height="874" />
+        </state>
+        <state x="356" y="75" width="800" height="754" key="new project wizard/0.33.1512.874" timestamp="1785280369046" />
+      </component>
+      <component name="masterDetails">
+        <states>
+          <state key="Copyright.UI">
+            <settings>
+              <splitter-proportions>
+                <option name="proportions">
+                  <list>
+                    <option value="0.2" />
+                  </list>
+                </option>
+              </splitter-proportions>
+            </settings>
+          </state>
+          <state key="ScopeChooserConfigurable.UI">
+            <settings>
+              <splitter-proportions>
+                <option name="proportions">
+                  <list>
+                    <option value="0.2" />
+                  </list>
+                </option>
+              </splitter-proportions>
+            </settings>
+          </state>
+        </states>
+      </component>
+    </defaultProject>
+  </component>
+</application>

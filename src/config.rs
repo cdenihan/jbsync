@@ -62,6 +62,8 @@ pub struct RepoConfig {
     pub remote: Option<String>,
     /// Overrides where the local working copy of the sync-data store lives.
     pub path: Option<PathBuf>,
+    /// Branch the git backend publishes to.
+    pub branch: String,
 }
 
 impl Default for RepoConfig {
@@ -70,6 +72,7 @@ impl Default for RepoConfig {
             backend: "git".to_string(),
             remote: None,
             path: None,
+            branch: "main".to_string(),
         }
     }
 }

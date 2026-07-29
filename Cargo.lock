@@ -428,7 +428,6 @@ dependencies = [
  "rust-cli-release",
  "serde",
  "serde_json",
- "sha2",
  "tempfile",
  "thiserror",
  "toml",
@@ -609,8 +608,8 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "rust-cli-release"
-version = "1.4.0"
-source = "git+https://github.com/cdenihan/rust-cli-release?tag=v1.4.0#653bae2108b2d8ee15ef16f5e30c048ca643273f"
+version = "1.5.0"
+source = "git+https://github.com/cdenihan/rust-cli-release?tag=v1.5.0#5efa73d00356f202718712e2b9ddb4b0aa6bf33d"
 dependencies = [
  "dirs",
  "fs2",
