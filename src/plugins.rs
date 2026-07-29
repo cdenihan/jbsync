@@ -468,6 +468,71 @@ fn evaluate(
     }
 }
 
+/// A plugin that is installed but cannot load, because something it declares as
+/// required is not present in that IDE.
+#[derive(Debug, Clone)]
+pub struct BrokenPlugin {
+    pub ide: String,
+    pub plugin: String,
+    /// Dependencies the IDE cannot satisfy.
+    pub missing: Vec<String>,
+    /// The subset of `missing` that looks like a Marketplace plugin rather than
+    /// a platform module, and so can be fixed by installing it.
+    pub installable: Vec<String>,
+}
+
+/// Checks the plugins each IDE *already has*, rather than the ones jbsync would
+/// add.
+///
+/// `plan_installs` deliberately skips anything already installed, so a plugin
+/// put there by hand — or copied in by Toolbox when it set the IDE up — that
+/// the IDE cannot satisfy stays invisible until the IDE itself complains at
+/// startup. This is the check that catches it first.
+pub fn diagnose(ides: &[&Ide], config: &SyncConfig) -> Vec<BrokenPlugin> {
+    let mut broken = Vec::new();
+    for ide in ides {
+        let present = installed(ide, true);
+        let capable = capabilities(ide, &present, &config.plugins);
+        // Only third-party plugins are worth reporting: a bundled plugin with
+        // an unmet dependency is the product's own business.
+        for (id, plugin) in installed(ide, false) {
+            let missing: Vec<String> = plugin
+                .required_dependencies
+                .iter()
+                .filter(|needed| !capable.contains(*needed))
+                .cloned()
+                .collect();
+            if missing.is_empty() {
+                continue;
+            }
+            broken.push(BrokenPlugin {
+                ide: ide
+                    .path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                plugin: id,
+                installable: missing
+                    .iter()
+                    .filter(|needed| is_marketplace_plugin(needed))
+                    .cloned()
+                    .collect(),
+                missing,
+            });
+        }
+    }
+    broken
+}
+
+/// Distinguishes a dependency that could be installed from a platform module
+/// that could not.
+///
+/// Platform capabilities are namespaced `com.intellij.modules.*`; anything else
+/// declared as required is a plugin, and a missing one is fixable.
+fn is_marketplace_plugin(dependency: &str) -> bool {
+    !dependency.starts_with("com.intellij.modules.")
+}
+
 /// Builds the manifest from what is installed across every IDE.
 pub fn collect(ides: &[&Ide], config: &SyncConfig) -> Manifest {
     let mut merged: BTreeMap<String, Plugin> = BTreeMap::new();

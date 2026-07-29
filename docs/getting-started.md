@@ -175,17 +175,20 @@ store for not being a user choice, and why.
 
 Work down this list.
 
-1. **Is the IDE visible?** `jbsync ides`. If not, it has never been launched, or
-   `jetbrains.ides` in `sync.toml` does not match its directory name.
-2. **Is the file eligible?** `jbsync status --verbose` shows what was considered
+1. **Is the IDE visible?** `jbsync ides`. If not, `jetbrains.ides` in
+   `sync.toml` does not match its directory name.
+2. **Has the IDE ever been launched?** A report saying
+   `skipped: never launched` means the installer created the directory but the
+   IDE has never run, so it has only factory defaults. Start it once.
+3. **Is the file eligible?** `jbsync status --verbose` shows what was considered
    and what was pruned. jbsync syncs the files the JetBrains platform itself
    roams — see [how it works](how-it-works.md#1-what-gets-synced). Deliberate
    omissions include `other.xml` and the `llm.*.xml` files.
-3. **Is it a per-machine file?** Window geometry, recent projects, path macros,
+4. **Is it a per-machine file?** Window geometry, recent projects, path macros,
    proxy settings and SSH history are excluded on purpose.
-4. **Does it need a restart?** The IDE holds settings in memory and writes them
+5. **Does it need a restart?** The IDE holds settings in memory and writes them
    on exit. Quit the IDE, then sync.
-5. **Is JetBrains' own sync still on?** `jbsync disable-builtin-sync`.
+6. **Is JetBrains' own sync still on?** `jbsync disable-builtin-sync`.
 
 To force a file in that jbsync is not picking up:
 
@@ -218,6 +221,7 @@ so use it deliberately.
 | `~/.jbsync/data/sync.toml` | Policy shared with every machine. |
 | `~/.jbsync/data/machines/<id>.toml` | Overrides for one machine. |
 | `~/.jbsync/data/plugins.json` | The plugin manifest. |
+| `~/.jbsync/data/manifest.toml` | Which files roam, learned and shared. |
 | `~/.jbsync/base/` | Last state each IDE and the store agreed on. |
 | `~/.jbsync/backups/<timestamp>/` | Copies taken before overwriting. |
 

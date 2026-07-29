@@ -20,6 +20,35 @@ pub struct Ide {
     pub metadata: Option<ProductMetadata>,
 }
 
+/// The files the IntelliJ platform itself accepts as proof that a directory is
+/// a real config directory rather than one an installer just created.
+///
+/// Mirrors `ConfigImportHelper#OPTIONS` (copied as `InitialConfigImportState.OPTIONS`
+/// in intellij-community). An installer such as Toolbox lays down an `options/`
+/// full of factory defaults before the IDE has ever run; none of these three
+/// appear until the IDE actually starts.
+const LAUNCHED_MARKERS: [&str; 3] = [
+    "options/other.xml",
+    "options/ide.general.xml",
+    "options/options.xml",
+];
+
+impl Ide {
+    /// Whether this IDE has ever been started.
+    ///
+    /// A never-launched IDE must not take part in a sync. Its `options/` holds
+    /// the product's factory defaults, which would otherwise be harvested into
+    /// the store and pushed onto machines where the user really did choose
+    /// something; and anything written into it races the first-run import
+    /// wizard, which may discard or overwrite the lot.
+    #[must_use]
+    pub fn has_been_launched(&self) -> bool {
+        LAUNCHED_MARKERS
+            .iter()
+            .any(|marker| self.path.join(marker).is_file())
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct ProductMetadata {
     pub data_directory_name: String,

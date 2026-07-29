@@ -25,9 +25,15 @@ declares it in code, with `@State` and a `RoamingType`, and any IDE that has run
 the bundled Backup and Sync writes the resulting file list into a `settingsSync/`
 directory in its config folder.
 
-jbsync reads those directories, pools them across every installed IDE, and uses
-the union as its allowlist. An IDE that never enabled Backup and Sync still
-syncs the right files, learned from its siblings.
+jbsync reads those directories, pools them across every installed IDE, and
+**records the union in `manifest.toml` at the root of the store**. Because that
+file replicates like everything else there, a manifest learned once by any
+machine reaches all of them — including a machine set up from scratch where
+Backup and Sync has never run, and products like WebStorm that ship without a
+tree even when their siblings have one.
+
+The record only ever grows. An IDE being uninstalled, or Backup and Sync being
+switched off, is not evidence that a file stopped being roamable.
 
 This matters more than it sounds. The obvious rule — "sync `options/*.xml`" —
 is wrong:
@@ -39,8 +45,29 @@ JetBrains excludes both. Because jbsync derives its list from the platform's own
 answer rather than from a hand-written one, it excludes them too, and keeps
 doing so as JetBrains changes its mind — with nobody maintaining a list.
 
-Only when no installed IDE has a `settingsSync/` directory does a small built-in
-fallback list apply.
+A built-in list is unioned in as well. It is a **floor, not a fallback**: it
+applies always, so one IDE with a thin `settingsSync/` tree cannot narrow what
+the others sync.
+
+Every entry in that built-in list was checked against real trees. A file that
+exists in an IDE's `options/` but never appears in that same IDE's
+`settingsSync/` is one the platform declines to roam, and does not belong there
+— that test removed `project.default.xml`, `find.xml`, `advancedSettings.xml`,
+`console-font.xml`, `terminal-font.xml` and `textmate.xml`, each confirmed
+across four products.
+
+### IDEs that have never been launched
+
+An installer such as Toolbox creates the config directory and fills `options/`
+with the product's factory defaults before the IDE has ever run. jbsync skips
+such a directory and says so, using the platform's own test for a real config
+directory — the presence of `options/other.xml`, `options/ide.general.xml` or
+`options/options.xml`, mirroring `ConfigImportHelper#OPTIONS`.
+
+Two things go wrong otherwise: those factory defaults get harvested into the
+store and pushed onto machines where you really did choose something, and
+anything written into that directory races the IDE's first-run import wizard,
+which may discard it. Launch the IDE once and it joins the next sync normally.
 
 ### Always excluded
 
@@ -263,6 +290,21 @@ Compatibility is checked before anything is installed: build ranges (including
 `jbsync plugins` shows the manifest and the verdict per IDE. Installation is
 opt-in via `jbsync sync --install-plugins`, because it launches the IDE binary
 and that should not happen behind your back.
+
+It also reports plugins that are **already installed but cannot load**, which is
+a different question from what to install next. A plugin put there by hand — or
+copied in by Toolbox while setting the IDE up — may declare a dependency the
+product cannot satisfy:
+
+```
+Installed but cannot load:
+  WebStorm2026.2: com.github.l34130.mise needs org.toml.lang
+      fix: install org.toml.lang in WebStorm2026.2
+```
+
+That is the same failure the IDE reports at startup, found before you open it.
+A dependency namespaced `com.intellij.modules.*` is a platform capability and
+cannot be installed; anything else is a Marketplace plugin, and jbsync says so.
 
 ---
 

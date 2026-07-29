@@ -203,6 +203,26 @@ pub fn run() -> anyhow::Result<()> {
                     action.ide, action.plugin, action.reason
                 );
             }
+
+            let broken = plugins::diagnose(&selected, &engine.sync_config);
+            if !broken.is_empty() {
+                println!("\nInstalled but cannot load:");
+                for entry in &broken {
+                    println!(
+                        "  {}: {} needs {}",
+                        entry.ide,
+                        entry.plugin,
+                        entry.missing.join(", ")
+                    );
+                    if !entry.installable.is_empty() {
+                        println!(
+                            "      fix: install {} in {}",
+                            entry.installable.join(", "),
+                            entry.ide
+                        );
+                    }
+                }
+            }
         }
         Command::DisableBuiltinSync { dry_run } => {
             let engine = Engine::open(cli.config_dir)?;

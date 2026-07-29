@@ -41,6 +41,8 @@ pub struct IdeReport {
     /// Display name from `product-info.json`, when available.
     pub display_name: String,
     pub files: Vec<FileReport>,
+    /// Set when the IDE took no part in this run, holding the reason to show.
+    pub skipped: Option<String>,
 }
 
 impl IdeReport {
@@ -81,6 +83,8 @@ impl SyncReport {
     pub fn is_empty(&self) -> bool {
         self.from_remote.iter().all(FileReport::is_empty)
             && self.ides.iter().all(IdeReport::is_empty)
+            // An IDE left out of the run is news, even when nothing else moved.
+            && self.ides.iter().all(|ide| ide.skipped.is_none())
             && self.plugins.is_empty()
     }
 
@@ -198,6 +202,10 @@ pub fn render(report: &SyncReport, verbose: bool) -> String {
             format!("{} ({})", ide.directory, ide.display_name)
         };
         let _ = writeln!(output, "\n{label}");
+        if let Some(reason) = &ide.skipped {
+            let _ = writeln!(output, "  skipped: {reason}");
+            continue;
+        }
         let interesting = if verbose {
             ide.has_detail()
         } else {
@@ -267,6 +275,7 @@ mod tests {
             ides: vec![IdeReport {
                 directory: "IntelliJIdea2026.2".to_string(),
                 display_name: "IntelliJ IDEA".to_string(),
+                skipped: None,
                 files: vec![FileReport {
                     path: "options/editor.xml".to_string(),
                     incoming: vec![change("Editor/fontSize", None, Some("14"))],

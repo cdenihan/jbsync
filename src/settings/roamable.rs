@@ -42,6 +42,14 @@ pub const DELETED_TOMBSTONE: &str = "DELETED";
 /// `options/*.xml`: JetBrains excludes plenty of files in that directory —
 /// `other.xml` holds per-machine UI state, `llm.*.xml` holds opaque JSON blobs
 /// — and syncing them produces noise and unresolvable conflicts.
+///
+/// Every entry here has been checked against real `settingsSync` trees: a file
+/// that exists in an IDE's `options/` but never appears in that IDE's
+/// `settingsSync/` is one the platform declines to roam, and does not belong
+/// here. `project.default.xml` (nested per-project components and a JSON blob
+/// of machine-local paths), `find.xml` (search history), `advancedSettings.xml`,
+/// `console-font.xml`, `terminal-font.xml` and `textmate.xml` all failed that
+/// check across four products and were removed.
 const BUILTIN_MANIFEST: &[&str] = &[
     "codestyles/**",
     "colors/**",
@@ -51,9 +59,7 @@ const BUILTIN_MANIFEST: &[&str] = &[
     "keymaps/**",
     "quicklists/**",
     "templates/**",
-    "options/advancedSettings.xml",
     "options/colors.scheme.xml",
-    "options/console-font.xml",
     "options/csvSettings.xml",
     "options/customization.xml",
     "options/databaseDrivers.xml",
@@ -65,7 +71,6 @@ const BUILTIN_MANIFEST: &[&str] = &[
     "options/editor.xml",
     "options/file.template.settings.xml",
     "options/filetypes.xml",
-    "options/find.xml",
     "options/github.xml",
     "options/gitlab.xml",
     "options/grazie_global.xml",
@@ -73,11 +78,8 @@ const BUILTIN_MANIFEST: &[&str] = &[
     "options/ide.general.xml",
     "options/IntelliLang.xml",
     "options/laf.xml",
-    "options/project.default.xml",
     "options/sshConfigs.xml",
-    "options/terminal-font.xml",
     "options/terminal.xml",
-    "options/textmate.xml",
     "options/ui.lnf.xml",
     "options/vcs.xml",
 ];
@@ -216,7 +218,12 @@ fn settings_sync_manifest(ide: &Ide) -> Vec<String> {
                 continue;
             };
             let relative = to_slash(relative);
-            if relative.starts_with(".metainfo/") || relative == ".gitignore" {
+            // Anything dot-prefixed here belongs to the bundled sync's own
+            // bookkeeping (`.metainfo/`, `.gitignore`) or to the operating
+            // system (`.DS_Store`) — never to a setting. Filtering by the
+            // convention rather than by name keeps the published manifest clean
+            // as JetBrains adds more of them.
+            if relative.split('/').any(|part| part.starts_with('.')) {
                 continue;
             }
             // A tombstone records a deletion; the live file, if any, is stale.
@@ -244,16 +251,31 @@ fn to_slash(path: &Path) -> String {
 /// an IDE that never enabled Backup and Sync — or a freshly installed one —
 /// still syncs exactly the right files, learned from its siblings rather than
 /// from a list this project would have to maintain by hand.
-pub fn learned_manifest(ides: &[&Ide]) -> Vec<String> {
+/// `remembered` is the union every machine has contributed so far, replicated
+/// through the store. Including it means a machine where Backup and Sync was
+/// never enabled — a fresh laptop, or a product like WebStorm that ships
+/// without the tree its siblings have — inherits everything the fleet has
+/// learned, instead of dropping to the built-in list.
+pub fn learned_manifest(ides: &[&Ide], remembered: &[String]) -> Vec<String> {
+    observed_manifest(ides)
+        .into_iter()
+        .chain(remembered.iter().cloned())
+        // The built-in list is a floor, not a last resort. Unioning it always
+        // means one IDE with a thin `settingsSync` tree cannot narrow what the
+        // rest of them sync.
+        .chain(BUILTIN_MANIFEST.iter().map(|value| (*value).to_string()))
+        .collect::<std::collections::BTreeSet<String>>()
+        .into_iter()
+        .collect()
+}
+
+/// Only what the installed IDEs can prove right now, with nothing remembered or
+/// built-in folded in. This is what gets published back to the store, so the
+/// record stays evidence the platform itself produced.
+pub fn observed_manifest(ides: &[&Ide]) -> Vec<String> {
     let mut pooled: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for ide in ides {
         pooled.extend(settings_sync_manifest(ide));
-    }
-    if pooled.is_empty() {
-        return BUILTIN_MANIFEST
-            .iter()
-            .map(|value| (*value).to_string())
-            .collect();
     }
     pooled.into_iter().collect()
 }
@@ -448,8 +470,13 @@ mod tests {
 
         let first = ide_at(&with_tree, "IntelliJIdea", "idea.vmoptions");
         let second = ide_at(&without_tree, "WebStorm", "webstorm.vmoptions");
-        let manifest = learned_manifest(&[&first, &second]);
-        assert_eq!(manifest, vec!["options/laf.xml".to_string()]);
+        let manifest = learned_manifest(&[&first, &second], &[]);
+        assert!(manifest.contains(&"options/laf.xml".to_string()));
+        assert_eq!(
+            observed_manifest(&[&first, &second]),
+            vec!["options/laf.xml".to_string()],
+            "only what an IDE proved is published back to the store"
+        );
 
         // The IDE with no tree of its own still gets the pooled allowlist, and
         // nothing outside it — `other.xml` is not roamed by JetBrains.
@@ -464,11 +491,28 @@ mod tests {
     fn without_any_learned_tree_the_builtin_list_applies() {
         let directory = tempfile::tempdir().unwrap();
         let ide = ide_at(directory.path(), "WebStorm", "webstorm.vmoptions");
-        let manifest = learned_manifest(&[&ide]);
+        let manifest = learned_manifest(&[&ide], &[]);
         assert!(manifest.contains(&"options/editor.xml".to_string()));
         assert!(
             !manifest.iter().any(|entry| entry == "options/other.xml"),
             "per-machine UI state must never be in the fallback list"
+        );
+    }
+
+    /// The point of remembering: a machine with no `settingsSync` tree of its
+    /// own still syncs what another machine proved roams.
+    #[test]
+    fn a_remembered_entry_widens_the_manifest() {
+        let directory = tempfile::tempdir().unwrap();
+        let ide = ide_at(directory.path(), "WebStorm", "webstorm.vmoptions");
+        let remembered = vec!["options/unusual.xml".to_string()];
+        let manifest = learned_manifest(&[&ide], &remembered);
+        assert!(manifest.contains(&"options/unusual.xml".to_string()));
+        // Remembering must not narrow the floor the built-in list provides.
+        assert!(manifest.contains(&"options/editor.xml".to_string()));
+        assert!(
+            observed_manifest(&[&ide]).is_empty(),
+            "this machine observed nothing, so it publishes nothing"
         );
     }
 

@@ -30,6 +30,14 @@ impl Machine {
         std::fs::create_dir_all(&config_dir).unwrap();
         for ide in ides {
             std::fs::create_dir_all(jetbrains_root.join(ide).join("options")).unwrap();
+            // The platform writes other.xml on first start, and jbsync treats
+            // its absence as "installed but never launched". These IDEs are
+            // meant to look like ones somebody has actually used.
+            std::fs::write(
+                jetbrains_root.join(ide).join("options/other.xml"),
+                "<application />",
+            )
+            .unwrap();
         }
         std::fs::write(
             config_dir.join("config.toml"),
@@ -351,6 +359,105 @@ fn settings_the_ide_owns_survive_a_sync() {
     assert!(
         !stored.contains("ide.experimental.ui"),
         "IDE-owned registry keys are not user choices"
+    );
+}
+
+/// An installer lays down a full `options/` of factory defaults before the IDE
+/// has ever run. Harvesting those would publish the product's defaults as if
+/// they were choices, and writing into that directory races the first-run
+/// import wizard.
+#[test]
+fn an_ide_that_has_never_been_launched_takes_no_part() {
+    let remote = bare_remote();
+    let machine = Machine::new(remote.path(), &["IntelliJIdea2026.2"]);
+    machine.write_option(
+        "IntelliJIdea2026.2",
+        "editor.xml",
+        "Editor",
+        &[("tabs", "4")],
+    );
+
+    // A second IDE as an installer leaves it: options/ populated, but none of
+    // the markers the platform writes on first start.
+    let fresh = machine.jetbrains_root.join("WebStorm2026.2");
+    std::fs::create_dir_all(fresh.join("options")).unwrap();
+    std::fs::write(
+        fresh.join("options/editor.xml"),
+        "<?xml version='1.0' encoding='utf-8'?>\n<application>\n  <component name=\"Editor\">\n    <option name=\"tabs\" value=\"99\" />\n  </component>\n</application>",
+    )
+    .unwrap();
+
+    let report = machine.sync();
+
+    let webstorm = report
+        .ides
+        .iter()
+        .find(|ide| ide.directory == "WebStorm2026.2")
+        .expect("a skipped IDE is still reported, not silently dropped");
+    assert!(
+        webstorm.skipped.is_some(),
+        "a never-launched IDE must be skipped"
+    );
+
+    let store = Engine::open(Some(machine.config_dir.clone()))
+        .unwrap()
+        .store_root()
+        .to_path_buf();
+    let stored = std::fs::read_to_string(store.join("shared/options/editor.xml")).unwrap();
+    assert!(
+        stored.contains("\"4\"") && !stored.contains("\"99\""),
+        "the factory default must not reach the store, got: {stored}"
+    );
+}
+
+/// The whole point of remembering the manifest: a machine where JetBrains'
+/// Backup and Sync has never run must still sync the same files.
+#[test]
+fn a_machine_with_no_settings_sync_tree_inherits_the_manifest() {
+    let remote = bare_remote();
+
+    // The first machine has run Backup and Sync, so it can prove that this
+    // otherwise unremarkable file roams.
+    let first = Machine::new(remote.path(), &["IntelliJIdea2026.2"]);
+    let tree = first
+        .jetbrains_root
+        .join("IntelliJIdea2026.2/settingsSync/options");
+    std::fs::create_dir_all(&tree).unwrap();
+    std::fs::write(tree.join("unusual.xml"), "<application />").unwrap();
+    first.write_option(
+        "IntelliJIdea2026.2",
+        "unusual.xml",
+        "Unusual",
+        &[("on", "true")],
+    );
+    first.sync();
+
+    let store = Engine::open(Some(first.config_dir.clone()))
+        .unwrap()
+        .store_root()
+        .to_path_buf();
+    assert!(
+        store.join("manifest.toml").exists(),
+        "the learned manifest is published to the store"
+    );
+    assert!(store.join("shared/options/unusual.xml").exists());
+
+    // A second machine with no settingsSync tree anywhere still adopts it.
+    let second = Machine::new(remote.path(), &["IntelliJIdea2026.2"]);
+    assert!(
+        !second
+            .jetbrains_root
+            .join("IntelliJIdea2026.2/settingsSync")
+            .exists()
+    );
+    second.sync();
+
+    assert_eq!(
+        second
+            .read_option("IntelliJIdea2026.2", "unusual.xml", "Unusual/on")
+            .as_deref(),
+        Some("true"),
+        "the manifest travelled, so the file did too"
     );
 }
 

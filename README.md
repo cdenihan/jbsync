@@ -94,16 +94,17 @@ Any IDE that has run JetBrains' bundled Backup and Sync leaves a `settingsSync/`
 directory, and that directory is the platform's own answer to what roams — it is
 produced by the same `RoamingType` annotations the IDE uses internally.
 
-`jbsync` pools those lists across every installed IDE and uses the result as its
-allowlist. An IDE that never enabled Backup and Sync still syncs the right files,
-learned from its siblings. This matters: a plausible-looking `options/*.xml` rule
+`jbsync` pools those lists across every installed IDE and records the union in
+the store, so a manifest learned once by any machine reaches all of them — even
+one set up from scratch where Backup and Sync has never run. A curated built-in
+list is unioned in as a floor. This matters: a plausible-looking `options/*.xml` rule
 would sweep up `other.xml`, which is per-machine UI state, and the `llm.*.xml`
 files, which are opaque JSON blobs that cannot be merged meaningfully. JetBrains
 excludes both, so `jbsync` does too, without anyone maintaining a list.
 
-Only when no installed IDE has such a directory does a built-in fallback list
-apply. Caches, credentials, telemetry, window geometry and per-host trust are
-excluded in every case.
+Caches, credentials, telemetry, window geometry and per-host trust are excluded
+in every case. An IDE that has never been launched is skipped rather than
+harvested, so an installer's factory defaults never reach the store.
 
 ### Only settings you changed
 

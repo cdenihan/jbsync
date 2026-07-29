@@ -31,7 +31,7 @@ use crate::{
     ide::{self, Ide},
     paths::Paths,
     plugins,
-    settings::{prune, roamable},
+    settings::{manifest, prune, roamable},
     xml::{dom, project},
 };
 
@@ -461,12 +461,37 @@ impl Engine {
         let mut reports = Vec::new();
         let stamp = timestamp();
 
-        // Learn the allowlist from every installed IDE, not just the selected
-        // ones, so `--ide WebStorm` still benefits from IntelliJ's knowledge.
-        let all: Vec<&Ide> = self.ides.iter().collect();
-        let manifest = roamable::learned_manifest(&all);
+        // Learn the allowlist from every launched IDE, not just the selected
+        // ones, so `--ide WebStorm` still benefits from IntelliJ's knowledge,
+        // and fold in what other machines have already taught the store.
+        let all: Vec<&Ide> = self
+            .ides
+            .iter()
+            .filter(|ide| ide.has_been_launched())
+            .collect();
+        let remembered = self.remembered_manifest(staging)?;
+        let manifest = roamable::learned_manifest(&all, &remembered);
+        self.remember_manifest(&all, staging)?;
 
         for ide in self.selected_ides(&options.only) {
+            // An IDE that has never been started has only factory defaults to
+            // offer, and the first-run import wizard may discard anything
+            // written into it. Report it rather than silently skipping.
+            if !ide.has_been_launched() {
+                reports.push(IdeReport {
+                    directory: directory_name(ide),
+                    display_name: ide
+                        .metadata
+                        .as_ref()
+                        .map(|metadata| metadata.name.clone())
+                        .unwrap_or_default(),
+                    files: Vec::new(),
+                    skipped: Some(
+                        "never launched - start it once so it has settings of its own".to_string(),
+                    ),
+                });
+                continue;
+            }
             let discovered = roamable::discover(ide, &self.sync_config, &manifest)?;
             let mut relatives: BTreeSet<String> = discovered.keys().cloned().collect();
             relatives.extend(staging.files_under(&self.store_root().join(SHARED)));
@@ -487,9 +512,43 @@ impl Engine {
                     .map(|metadata| metadata.name.clone())
                     .unwrap_or_default(),
                 files,
+                skipped: None,
             });
         }
         Ok(reports)
+    }
+
+    /// The allowlist other machines have already contributed to the store.
+    fn remembered_manifest(&self, staging: &Staging) -> Result<Vec<String>> {
+        let path = self.store_root().join(manifest::FILE_NAME);
+        let Some(raw) = staging.read(&path) else {
+            return Ok(Vec::new());
+        };
+        let text = String::from_utf8(raw)
+            .map_err(|_| JbsyncError::configuration("manifest.toml is not valid UTF-8"))?;
+        Ok(toml::from_str::<manifest::StoredManifest>(&text)
+            .map_err(|error| JbsyncError::configuration(format!("manifest.toml: {error}")))?
+            .roamable)
+    }
+
+    /// Publishes what this machine's IDEs can prove about roamability, so a
+    /// machine that never ran Backup and Sync inherits it.
+    fn remember_manifest(&self, ides: &[&Ide], staging: &mut Staging) -> Result<()> {
+        let path = self.store_root().join(manifest::FILE_NAME);
+        let mut stored = match staging.read(&path) {
+            Some(raw) => {
+                let text = String::from_utf8(raw)
+                    .map_err(|_| JbsyncError::configuration("manifest.toml is not valid UTF-8"))?;
+                toml::from_str(&text).map_err(|error| {
+                    JbsyncError::configuration(format!("manifest.toml: {error}"))
+                })?
+            }
+            None => manifest::StoredManifest::default(),
+        };
+        if stored.absorb(&roamable::observed_manifest(ides)) {
+            staging.write(&path, Some(stored.encode()?.as_bytes()))?;
+        }
+        Ok(())
     }
 
     fn reconcile_file(

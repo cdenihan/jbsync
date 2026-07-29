@@ -8,6 +8,10 @@ Three files, separated by how far each one should travel.
 | `sync.toml` | the store's root | every machine | what to sync and what counts as a setting |
 | `machines/<id>.toml` | the store | one named machine | that machine's exceptions |
 
+The store also holds `manifest.toml`, the learned list of which files roam.
+jbsync maintains it; you do not edit it. It is what lets a machine that never
+ran JetBrains' Backup and Sync still sync the right files.
+
 Every file is optional. jbsync runs on defaults with no configuration at all,
 and every key below shows its default. Unset keys are not merely tolerated —
 they are the normal case.
