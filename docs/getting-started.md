@@ -126,8 +126,12 @@ separate credentials to configure.
 $ jbsync sync
 ```
 
-That is the whole workflow. It is safe to run often; when nothing changed it
-says so and writes nothing. It is safe to run while an IDE is open, but the IDE
+That is the whole workflow. While it works it shows a single status line on
+stderr — which phase, and which IDE it is on — replaced in place and cleared
+before the report. Redirect or pipe the output and that line is not written at
+all, so scripts see exactly the report and nothing else.
+
+It is safe to run often; when nothing changed it says so and writes nothing. It is safe to run while an IDE is open, but the IDE
 will not notice incoming changes until it restarts — no supported API exists to
 make a running JetBrains IDE reload settings another process rewrote.
 
@@ -177,9 +181,11 @@ Work down this list.
 
 1. **Is the IDE visible?** `jbsync ides`. If not, `jetbrains.ides` in
    `sync.toml` does not match its directory name.
-2. **Has the IDE ever been launched?** A report saying
-   `skipped: never launched` means the installer created the directory but the
-   IDE has never run, so it has only factory defaults. Start it once.
+2. **Has the IDE ever been launched?** A report saying `skipped: never
+   launched` means the installer created the directory but the IDE has never
+   run, so it has only factory defaults. jbsync records those as a defaults
+   reference — genuinely useful — but the IDE takes no further part until you
+   start it once.
 3. **Is the file eligible?** `jbsync status --verbose` shows what was considered
    and what was pruned. jbsync syncs the files the JetBrains platform itself
    roams — see [how it works](how-it-works.md#1-what-gets-synced). Deliberate
@@ -222,6 +228,7 @@ so use it deliberately.
 | `~/.jbsync/data/machines/<id>.toml` | Overrides for one machine. |
 | `~/.jbsync/data/plugins.json` | The plugin manifest. |
 | `~/.jbsync/data/manifest.toml` | Which files roam, learned and shared. |
+| `~/.jbsync/data/defaults/` | Each product's factory defaults. |
 | `~/.jbsync/base/` | Last state each IDE and the store agreed on. |
 | `~/.jbsync/backups/<timestamp>/` | Copies taken before overwriting. |
 

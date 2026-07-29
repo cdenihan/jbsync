@@ -6,6 +6,7 @@ pub mod ide;
 pub mod paths;
 pub mod platform;
 pub mod plugins;
+pub mod progress;
 pub mod settings;
 pub mod sync;
 pub mod update;

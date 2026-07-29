@@ -17,7 +17,9 @@
 //! Rules are data, so covering a newly noisy component is a table entry here
 //! or an `[[xml.omit]]` block in `sync.toml` — never a new code path.
 
-use crate::{config::XmlOmitRule, xml::dom::Element, xml::project};
+use crate::{
+    config::XmlOmitRule, settings::defaults::ProductDefaults, xml::dom::Element, xml::project,
+};
 
 /// Attributes that describe the file format rather than a user's choice. A
 /// component carrying only these, with no children, holds no settings.
@@ -125,11 +127,16 @@ fn rule_matches(
 }
 
 /// Removes non-setting content from `root`, reporting what went and why.
+/// `defaults`, when present, are the values this product shipped with, captured
+/// from an install nobody had opened yet. A setting still holding its default is
+/// not a choice, so it is removed here — before the bottom-up cleanup, so the
+/// component it lived in disappears too rather than lingering as an empty shell.
 pub fn prune_document(
     relative: &str,
     root: &mut Element,
     rules: &[XmlOmitRule],
     use_builtins: bool,
+    defaults: Option<&ProductDefaults>,
 ) -> PruneOutcome {
     let mut removed = Vec::new();
 
@@ -169,6 +176,21 @@ pub fn prune_document(
             &reason,
             &mut removed,
         );
+    }
+
+    if let Some(defaults) = defaults {
+        let untouched: Vec<String> = project::project(root)
+            .into_iter()
+            .filter(|(address, value)| defaults.value(relative, address) == Some(value.as_str()))
+            .map(|(address, _)| address)
+            .collect();
+        for address in untouched {
+            project::remove_leaf(root, &address);
+            removed.push(Removal {
+                path: project::sugar(&address),
+                reason: "unchanged from this product's default".to_string(),
+            });
+        }
     }
 
     // Prune bottom-up first: a component only looks settingless once the
@@ -278,7 +300,7 @@ mod tests {
 
     fn prune(relative: &str, source: &str) -> (Element, PruneOutcome) {
         let mut root = parse(source).unwrap();
-        let outcome = prune_document(relative, &mut root, &[], true);
+        let outcome = prune_document(relative, &mut root, &[], true, None);
         (root, outcome)
     }
 
@@ -302,6 +324,51 @@ mod tests {
             .collect();
         assert_eq!(kept, vec!["my.tweak", "older.style"]);
         assert_eq!(outcome.removed.len(), 2);
+    }
+
+    /// A setting still holding the value its product shipped with is not a
+    /// choice, and the component it lived in should go with it.
+    #[test]
+    fn a_value_matching_the_products_default_is_not_a_choice() {
+        let mut root = crate::xml::dom::parse(
+            "<application>\n  <component name=\"Editor\">\n    <option name=\"tabs\" value=\"4\" />\n    <option name=\"wrap\" value=\"true\" />\n  </component>\n</application>",
+        )
+        .unwrap();
+        let mut defaults = ProductDefaults::new("WebStorm", "262.1");
+        defaults.record(
+            "options/editor.xml",
+            crate::xml::project::project(&root).into_iter().collect(),
+        );
+
+        // Everything matches the default, so nothing is worth sharing.
+        let mut untouched = root.clone();
+        let outcome = prune_document(
+            "options/editor.xml",
+            &mut untouched,
+            &[],
+            true,
+            Some(&defaults),
+        );
+        assert!(
+            outcome.is_empty,
+            "an untouched file has no opinion, and leaves no empty shells"
+        );
+
+        // Change one of the two; only that one survives.
+        let donor = root.clone();
+        crate::xml::project::set_leaf(
+            &mut root,
+            &donor,
+            "component[name=Editor]/option[name=tabs]/@value",
+            "8",
+        );
+        let outcome = prune_document("options/editor.xml", &mut root, &[], true, Some(&defaults));
+        assert!(!outcome.is_empty);
+        let kept: Vec<String> = crate::xml::project::project(&root)
+            .into_keys()
+            .map(|address| crate::xml::project::sugar(&address))
+            .collect();
+        assert_eq!(kept, vec!["Editor/tabs".to_string()]);
     }
 
     #[test]
@@ -393,7 +460,7 @@ mod tests {
             attribute: None,
             equals: String::new(),
         }];
-        let outcome = prune_document("options/editor.xml", &mut root, &rules, true);
+        let outcome = prune_document("options/editor.xml", &mut root, &rules, true, None);
         assert_eq!(outcome.removed.len(), 1);
         assert_eq!(root.children[0].children.len(), 1);
     }
@@ -406,7 +473,7 @@ mod tests {
                </component></application>"#,
         )
         .unwrap();
-        let outcome = prune_document("options/editor.xml", &mut root, &[], true);
+        let outcome = prune_document("options/editor.xml", &mut root, &[], true, None);
         assert!(outcome.removed.is_empty());
     }
 }

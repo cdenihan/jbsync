@@ -7,6 +7,7 @@ use crate::{
     error::Result,
     paths::Paths,
     plugins,
+    progress::Progress,
     sync::{ConflictPolicy, Engine, SyncOptions, render},
 };
 
@@ -140,7 +141,7 @@ pub fn run() -> anyhow::Result<()> {
                 dry_run: true,
                 ..SyncOptions::default()
             };
-            let report = engine.sync(&options)?;
+            let report = engine.sync_reporting(&options, &mut Progress::new())?;
             print!("{}", render(&report, cli.verbose));
         }
         Command::Sync {
@@ -160,7 +161,7 @@ pub fn run() -> anyhow::Result<()> {
                 collect_only,
                 install_plugins,
             };
-            let report = engine.sync(&options)?;
+            let report = engine.sync_reporting(&options, &mut Progress::new())?;
             print!("{}", render(&report, cli.verbose));
         }
         Command::Ides => {

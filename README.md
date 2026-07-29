@@ -122,6 +122,11 @@ rule rather than by code:
   `source="SYSTEM"` or `"MANAGER"`, one-shot migration flags;
 - components that persist only a schema version and no settings.
 
+Better still, jbsync *learns* the defaults. An IDE that has been installed but
+never opened contains nothing but its product's factory settings, so jbsync
+records them into the store before skipping it. After that, any setting still
+holding its shipped value is known not to be a choice, on every machine.
+
 `jbsync sync --verbose` lists exactly what was dropped and why. To cover
 something new, add an `[[xml.omit]]` block to `sync.toml` — no code changes.
 

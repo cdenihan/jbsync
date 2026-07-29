@@ -410,6 +410,53 @@ fn an_ide_that_has_never_been_launched_takes_no_part() {
     );
 }
 
+/// An IDE nobody has opened is the only clean sample of a product's factory
+/// defaults. Capturing it lets jbsync tell a choice from a shipped value.
+#[test]
+fn a_never_launched_ide_teaches_which_values_are_defaults() {
+    let remote = bare_remote();
+    let machine = Machine::new(remote.path(), &["WebStorm2026.2"]);
+
+    // The user changed `tabs` and left `wrap` alone.
+    machine.write_option(
+        "WebStorm2026.2",
+        "editor.xml",
+        "Editor",
+        &[("tabs", "8"), ("wrap", "true")],
+    );
+
+    // A second install of the same product, never opened: both values as
+    // shipped. Same product name, so it is the same defaults record.
+    let fresh = machine.jetbrains_root.join("WebStorm2025.3");
+    std::fs::create_dir_all(fresh.join("options")).unwrap();
+    std::fs::write(
+        fresh.join("options/editor.xml"),
+        "<?xml version='1.0' encoding='utf-8'?>\n<application>\n  <component name=\"Editor\">\n    <option name=\"tabs\" value=\"4\" />\n    <option name=\"wrap\" value=\"true\" />\n  </component>\n</application>",
+    )
+    .unwrap();
+
+    machine.sync();
+
+    let store = Engine::open(Some(machine.config_dir.clone()))
+        .unwrap()
+        .store_root()
+        .to_path_buf();
+    assert!(
+        store.join("defaults/WebStorm.toml").exists(),
+        "the untouched install's defaults are recorded and shared"
+    );
+
+    let stored = std::fs::read_to_string(store.join("shared/options/editor.xml")).unwrap();
+    assert!(
+        stored.contains("tabs") && stored.contains("\"8\""),
+        "a changed value is a choice and must sync: {stored}"
+    );
+    assert!(
+        !stored.contains("wrap"),
+        "a value still at its shipped default is not a choice: {stored}"
+    );
+}
+
 /// The whole point of remembering the manifest: a machine where JetBrains'
 /// Backup and Sync has never run must still sync the same files.
 #[test]

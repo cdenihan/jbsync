@@ -59,9 +59,9 @@ across four products.
 ### IDEs that have never been launched
 
 An installer such as Toolbox creates the config directory and fills `options/`
-with the product's factory defaults before the IDE has ever run. jbsync skips
-such a directory and says so, using the platform's own test for a real config
-directory — the presence of `options/other.xml`, `options/ide.general.xml` or
+with the product's factory defaults before the IDE has ever run. jbsync records
+those defaults (see above) but otherwise skips such a directory and says so,
+using the platform's own test for a real config directory — the presence of `options/other.xml`, `options/ide.general.xml` or
 `options/options.xml`, mirroring `ConfigImportHelper#OPTIONS`.
 
 Two things go wrong otherwise: those factory defaults get harvested into the
@@ -107,9 +107,47 @@ rather than by code:
 | Values the IDE set for itself, not for you | registry entries with `source="SYSTEM"` or `"MANAGER"`, one-shot `MIGRATE_OLD_SETTINGS` flags |
 | Components persisting only a schema version | `<component name="X" version="1"/>` |
 
-After the rules run, containers left holding nothing are removed bottom-up, so
-emptying a map does not leave `<map/>` behind, and a component with no settings
-left disappears rather than lingering as noise.
+### Learning a product's defaults
+
+The rules above are judgement calls. There is a way to *know*.
+
+A JetBrains installer creates the config directory and fills `options/` with the
+product's factory defaults **before the IDE has ever run**. That directory is
+the cleanest possible answer to "did the user choose this, or did it ship this
+way?" — and it exists only in the window between installing an IDE and opening
+it for the first time.
+
+So jbsync captures it when it sees it. A never-launched IDE takes no part in the
+sync, but its files are projected into `defaults/<Product>.toml` in the store,
+which replicates like everything else there. From then on, any setting still
+holding its recorded default is treated as not-a-choice and kept out of the
+shared store — on every machine, for that product.
+
+```
+WebStorm2025.3
+  skipped: never launched - recorded its factory defaults; start it once for it
+           to take part
+```
+
+Defaults are keyed by product, never pooled across products: WebStorm and CLion
+disagree about plenty. The build number is recorded for diagnosis but not used
+for matching — a value that was this product's default at any point is not
+evidence of a choice, and requiring an exact build match would make the capture
+useless the first time the IDE updated.
+
+This is the same judgement the platform already makes for itself. When a
+component's state equals its default-constructed state, nothing is written at
+all; capturing the defaults extends that to the components which write
+themselves out regardless.
+
+One consequence worth knowing: a setting you deliberately set *to* the default
+value is indistinguishable from one you never touched, so it is not shared. That
+is the platform's own semantics, and it is what makes "only what I chose"
+possible at all.
+
+After all the rules run, containers left holding nothing are removed bottom-up,
+so emptying a map does not leave `<map/>` behind, and a component with no
+settings left disappears rather than lingering as noise.
 
 **Pruning decides what is shared, never what your IDE keeps.** Registry keys and
 tutorial progress stay in your IDE's own files, untouched. It is a filter on the

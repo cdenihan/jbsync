@@ -31,7 +31,8 @@ use crate::{
     ide::{self, Ide},
     paths::Paths,
     plugins,
-    settings::{manifest, prune, roamable},
+    progress::Progress,
+    settings::{defaults, manifest, prune, roamable},
     xml::{dom, project},
 };
 
@@ -183,7 +184,12 @@ impl Engine {
 
     /// Reduces an IDE's file to what belongs in the store: canonical form, with
     /// everything that is not a user choice removed.
-    fn store_view(&self, relative: &str, raw: &[u8]) -> (Option<Vec<u8>>, Vec<prune::Removal>) {
+    fn store_view(
+        &self,
+        relative: &str,
+        raw: &[u8],
+        defaults: Option<&defaults::ProductDefaults>,
+    ) -> (Option<Vec<u8>>, Vec<prune::Removal>) {
         let Ok(text) = std::str::from_utf8(raw) else {
             return (Some(raw.to_vec()), Vec::new());
         };
@@ -198,7 +204,9 @@ impl Engine {
             &mut document,
             &self.prune_rules(),
             self.sync_config.xml.use_defaults,
+            defaults.filter(|_| self.sync_config.xml.use_defaults),
         );
+
         if outcome.is_empty {
             return (None, outcome.removed);
         }
@@ -209,6 +217,17 @@ impl Engine {
     }
 
     pub fn sync(&mut self, options: &SyncOptions) -> Result<SyncReport> {
+        self.sync_reporting(options, &mut Progress::silent())
+    }
+
+    /// As [`Engine::sync`], but showing what it is working on. A sync spends
+    /// most of its time waiting on `git` and on walking IDE directories, and
+    /// saying nothing for that long is indistinguishable from a hang.
+    pub fn sync_reporting(
+        &mut self,
+        options: &SyncOptions,
+        progress: &mut Progress,
+    ) -> Result<SyncReport> {
         // Held for the whole run. A sync reads the IDEs, rewrites the store and
         // writes back; two overlapping runs could interleave those steps and
         // publish a half-merged result.
@@ -226,6 +245,7 @@ impl Engine {
         };
 
         let mut staging = Staging::new(options.dry_run);
+        progress.step("checking for changes from other machines...");
         report.from_remote = self.take_incoming(options, &mut staging)?;
 
         // IDEs are reconciled in sequence, so an IDE handled early cannot know
@@ -235,7 +255,7 @@ impl Engine {
         // re-reports the previous pass's work; two passes is the normal case
         // and the third only confirms convergence.
         for pass in 0..MAX_PASSES {
-            let outcome = self.reconcile_ides(options, &mut staging)?;
+            let outcome = self.reconcile_ides(options, &mut staging, progress, pass)?;
             let progressed = outcome.iter().any(|ide| !ide.is_empty());
             absorb(&mut report.ides, outcome);
             if !progressed {
@@ -246,9 +266,11 @@ impl Engine {
                 "reconciliation should converge well inside {MAX_PASSES} passes"
             );
         }
+        progress.step("checking plugins...");
         report.plugins = self.reconcile_plugins(options)?;
 
         if !options.dry_run && !report.is_empty() {
+            progress.step("committing...");
             let published = self.backend.publish(&options.message)?;
             report.published = match published {
                 Published::Committed { files, cursor } => Some(format!(
@@ -265,6 +287,7 @@ impl Engine {
                 Published::Unchanged => None,
             };
         }
+        progress.clear();
         Ok(report)
     }
 
@@ -457,6 +480,8 @@ impl Engine {
         &self,
         options: &SyncOptions,
         staging: &mut Staging,
+        progress: &mut Progress,
+        pass: usize,
     ) -> Result<Vec<IdeReport>> {
         let mut reports = Vec::new();
         let stamp = timestamp();
@@ -473,7 +498,23 @@ impl Engine {
         let manifest = roamable::learned_manifest(&all, &remembered);
         self.remember_manifest(&all, staging)?;
 
-        for ide in self.selected_ides(&options.only) {
+        // Capture factory defaults before reconciling, so a product installed
+        // but not yet opened teaches this very run what its defaults are.
+        for ide in &self.ides {
+            if !ide.has_been_launched() {
+                self.capture_defaults(ide, &manifest, staging)?;
+            }
+        }
+
+        let selected = self.selected_ides(&options.only);
+        let total = selected.len();
+        for (index, ide) in selected.into_iter().enumerate() {
+            progress.step(&format!(
+                "pass {} - {} ({}/{total})...",
+                pass + 1,
+                directory_name(ide),
+                index + 1
+            ));
             // An IDE that has never been started has only factory defaults to
             // offer, and the first-run import wizard may discard anything
             // written into it. Report it rather than silently skipping.
@@ -487,7 +528,9 @@ impl Engine {
                         .unwrap_or_default(),
                     files: Vec::new(),
                     skipped: Some(
-                        "never launched - start it once so it has settings of its own".to_string(),
+                        "never launched - recorded its factory defaults; start it once for it to \
+                         take part"
+                            .to_string(),
                     ),
                 });
                 continue;
@@ -496,10 +539,17 @@ impl Engine {
             let mut relatives: BTreeSet<String> = discovered.keys().cloned().collect();
             relatives.extend(staging.files_under(&self.store_root().join(SHARED)));
 
+            let product_defaults = self.defaults_for(ide, staging)?;
+            let target = FileTarget {
+                ide,
+                discovered: &discovered,
+                options,
+                stamp: &stamp,
+                defaults: product_defaults.as_ref(),
+            };
             let mut files = Vec::new();
             for relative in relatives {
-                let report =
-                    self.reconcile_file(ide, &relative, &discovered, options, &stamp, staging)?;
+                let report = self.reconcile_file(&target, &relative, staging)?;
                 if let Some(report) = report {
                     files.push(report);
                 }
@@ -516,6 +566,65 @@ impl Engine {
             });
         }
         Ok(reports)
+    }
+
+    /// Records a never-launched IDE's factory defaults into the store.
+    ///
+    /// This is the only moment the defaults are observable: once the IDE runs,
+    /// its files mix defaults with whatever the user then changed.
+    fn capture_defaults(
+        &self,
+        ide: &Ide,
+        manifest: &[String],
+        staging: &mut Staging,
+    ) -> Result<()> {
+        let path = self
+            .store_root()
+            .join(defaults::relative_path(&ide.product));
+        let mut recorded = match staging.read(&path) {
+            Some(raw) => defaults::ProductDefaults::parse(
+                &String::from_utf8(raw)
+                    .map_err(|_| JbsyncError::configuration("defaults file is not valid UTF-8"))?,
+            )?,
+            None => defaults::ProductDefaults::new(&ide.product, build_of(ide)),
+        };
+
+        let mut changed = false;
+        for (relative, source) in roamable::discover(ide, &self.sync_config, manifest)? {
+            let Ok(raw) = std::fs::read(&source) else {
+                continue;
+            };
+            let Ok(text) = String::from_utf8(raw) else {
+                continue;
+            };
+            let Ok(document) = dom::parse(&text) else {
+                continue;
+            };
+            changed |=
+                recorded.record(&relative, project::project(&document).into_iter().collect());
+        }
+        if changed {
+            recorded.build = build_of(ide).to_string();
+            staging.write(&path, Some(recorded.encode()?.as_bytes()))?;
+        }
+        Ok(())
+    }
+
+    /// The factory defaults recorded for this IDE's product, if any.
+    fn defaults_for(
+        &self,
+        ide: &Ide,
+        staging: &Staging,
+    ) -> Result<Option<defaults::ProductDefaults>> {
+        let path = self
+            .store_root()
+            .join(defaults::relative_path(&ide.product));
+        let Some(raw) = staging.read(&path) else {
+            return Ok(None);
+        };
+        let text = String::from_utf8(raw)
+            .map_err(|_| JbsyncError::configuration("defaults file is not valid UTF-8"))?;
+        Ok(Some(defaults::ProductDefaults::parse(&text)?))
     }
 
     /// The allowlist other machines have already contributed to the store.
@@ -553,13 +662,17 @@ impl Engine {
 
     fn reconcile_file(
         &self,
-        ide: &Ide,
+        target: &FileTarget<'_>,
         relative: &str,
-        discovered: &std::collections::BTreeMap<String, PathBuf>,
-        options: &SyncOptions,
-        stamp: &str,
         staging: &mut Staging,
     ) -> Result<Option<FileReport>> {
+        let FileTarget {
+            ide,
+            discovered,
+            options,
+            stamp,
+            defaults,
+        } = *target;
         let ide_file = discovered.get(relative).cloned().unwrap_or_else(|| {
             ide.path.join(roamable::target_relative_path(
                 relative,
@@ -572,9 +685,9 @@ impl Engine {
         // disk directly would leave the IDE looking frozen while the store
         // moved on, so a second pass would conclude the IDE had deleted files.
         let raw = staging.read(&ide_file);
-        let (local_view, removed) = raw
-            .as_ref()
-            .map_or((None, Vec::new()), |bytes| self.store_view(relative, bytes));
+        let (local_view, removed) = raw.as_ref().map_or((None, Vec::new()), |bytes| {
+            self.store_view(relative, bytes, defaults)
+        });
 
         // The file is present but holds nothing worth sharing — every setting in
         // it was pruned as a default. That is "no opinion", not "deleted", and
@@ -702,6 +815,22 @@ impl Engine {
         }
         staging.write(ide_file, Some(&updated))
     }
+}
+
+/// Everything `reconcile_file` needs that does not change from file to file.
+struct FileTarget<'a> {
+    ide: &'a Ide,
+    discovered: &'a std::collections::BTreeMap<String, PathBuf>,
+    options: &'a SyncOptions,
+    stamp: &'a str,
+    defaults: Option<&'a defaults::ProductDefaults>,
+}
+
+/// The build this IDE reports, or empty when its installation is unknown.
+fn build_of(ide: &Ide) -> &str {
+    ide.metadata
+        .as_ref()
+        .map_or("", |metadata| metadata.build_number.as_str())
 }
 
 /// Folds a later reconciliation pass into the running report, so each IDE and

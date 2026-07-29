@@ -1,6 +1,7 @@
 //! Deciding *which* files sync, and *which* settings inside them are real user
 //! choices rather than the IDE's own bookkeeping.
 
+pub mod defaults;
 pub mod manifest;
 pub mod prune;
 pub mod roamable;
