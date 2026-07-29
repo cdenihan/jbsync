@@ -17,6 +17,8 @@ use std::{
     process::Command,
 };
 
+use rust_cli_release::{CommandError, CommandErrorKind, process as runner};
+
 use super::{Backend, Incoming, Published, Tree};
 use crate::error::{JbsyncError, Result};
 
@@ -40,23 +42,12 @@ impl GitBackend {
     }
 
     fn git(&self, arguments: &[&str]) -> Result<Vec<u8>> {
-        let output = Command::new("git")
-            .args(arguments)
-            .current_dir(&self.workdir)
-            .output()
-            .map_err(|error| {
-                JbsyncError::Git(format!(
-                    "could not run git (is it installed and on PATH?): {error}"
-                ))
-            })?;
-        if output.status.success() {
-            return Ok(output.stdout);
+        let mut command = Command::new("git");
+        command.args(arguments).current_dir(&self.workdir);
+        match runner::output(&mut command, false) {
+            Ok(output) => Ok(output.stdout),
+            Err(error) => Err(git_failure(arguments, error)),
         }
-        Err(JbsyncError::Git(format!(
-            "git {} failed: {}",
-            arguments.join(" "),
-            String::from_utf8_lossy(&output.stderr).trim()
-        )))
     }
 
     fn git_text(&self, arguments: &[&str]) -> Result<String> {
@@ -294,6 +285,26 @@ impl Backend for GitBackend {
     }
 }
 
+/// Renders a failed `git` invocation.
+///
+/// The arguments are joined as given rather than shell-quoted: these messages
+/// name the git plumbing a sync ran, and matching what the code asked for keeps
+/// them comparable with the calls above.
+fn git_failure(arguments: &[&str], error: CommandError) -> JbsyncError {
+    match error.into_kind() {
+        // Any failure to start git at all is reported the same way, since the
+        // overwhelmingly common cause is that it is not installed.
+        CommandErrorKind::Spawn(error) => JbsyncError::Git(format!(
+            "could not run git (is it installed and on PATH?): {error}"
+        )),
+        CommandErrorKind::Failed { stderr, .. } => JbsyncError::Git(format!(
+            "git {} failed: {}",
+            arguments.join(" "),
+            stderr.trim()
+        )),
+    }
+}
+
 /// Store paths that are jbsync's own bookkeeping rather than settings.
 pub fn is_internal_path(relative: &str) -> bool {
     relative == ".gitattributes" || relative.starts_with(".git/")
@@ -335,6 +346,29 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(directory.path().join(".gitattributes")).unwrap(),
             GITATTRIBUTES
+        );
+    }
+
+    /// A failing git command has to name what was run and quote git's own
+    /// complaint: when a sync stops, that message is all the user sees.
+    #[test]
+    fn a_failing_git_command_reports_the_arguments_and_gits_complaint() {
+        let directory = tempfile::tempdir().unwrap();
+        let git = backend(directory.path(), None);
+        git.initialize().unwrap();
+
+        let error = git
+            .git(&["rev-parse", "--verify", "refs/heads/absent"])
+            .unwrap_err();
+
+        let message = error.to_string();
+        assert!(
+            message.starts_with("git error: git rev-parse --verify refs/heads/absent failed:"),
+            "the arguments must appear as they were passed: {message}"
+        );
+        assert!(
+            message.len() > "git error: git rev-parse --verify refs/heads/absent failed:".len(),
+            "git's own stderr must be carried through: {message}"
         );
     }
 
