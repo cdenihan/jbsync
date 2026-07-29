@@ -40,6 +40,11 @@ use crate::{
 /// separate from jbsync's own files (`sync.toml`, `machines/`, `plugins.json`).
 const SHARED: &str = "shared";
 
+/// Timestamped backup runs kept on disk. Every sync that overwrites anything
+/// creates one, so without a cap they accumulate for the life of the install.
+/// Ten is enough to walk back a bad run and small enough to stay unnoticeable.
+const BACKUP_RUNS_KEPT: usize = 10;
+
 /// How many times reconciliation may repeat before it is considered stuck.
 /// Two passes is the normal case and the third only confirms convergence.
 const MAX_PASSES: usize = 4;
@@ -261,13 +266,24 @@ impl Engine {
             if !progressed {
                 break;
             }
-            debug_assert!(
-                pass + 1 < MAX_PASSES,
-                "reconciliation should converge well inside {MAX_PASSES} passes"
-            );
+            // A debug_assert here meant release builds stopped after the last
+            // pass and said nothing, so a genuinely unsettled sync looked
+            // complete. Nothing written is wrong -- every pass is a valid merge
+            // -- but the run is unfinished, and only the report can say so.
+            if pass + 1 == MAX_PASSES {
+                report.warnings.push(format!(
+                    "reconciliation had not settled after {MAX_PASSES} passes;                      some settings may need another `jbsync sync`.                      Please report this at https://github.com/cdenihan/jbsync/issues"
+                ));
+            }
         }
         progress.step("checking plugins...");
         report.plugins = self.reconcile_plugins(options)?;
+
+        if !options.dry_run {
+            // Best-effort: failing to tidy old backups must never fail a sync
+            // that already succeeded.
+            let _ = prune_backups(&self.paths.backups_dir(), BACKUP_RUNS_KEPT);
+        }
 
         if !options.dry_run && !report.is_empty() {
             progress.step("committing...");
@@ -957,6 +973,28 @@ impl Staging {
     }
 }
 
+/// Keeps the most recent `keep` timestamped backup runs and removes the rest.
+/// Directory names are the sort key: they are `YYYYMMDD-HHMMSS`, so
+/// lexicographic order is chronological order.
+fn prune_backups(root: &Path, keep: usize) -> Result<()> {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return Ok(());
+    };
+    let mut runs: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        .collect();
+    if runs.len() <= keep {
+        return Ok(());
+    }
+    runs.sort();
+    for stale in &runs[..runs.len() - keep] {
+        std::fs::remove_dir_all(stale)?;
+    }
+    Ok(())
+}
+
 fn write_or_remove(path: &Path, content: Option<&[u8]>) -> Result<()> {
     if let Some(bytes) = content {
         if let Some(parent) = path.parent() {
@@ -966,6 +1004,17 @@ fn write_or_remove(path: &Path, content: Option<&[u8]>) -> Result<()> {
         // file behind.
         let temporary = path.with_extension("jbsync-tmp");
         std::fs::write(&temporary, bytes)?;
+        // Renaming replaces the inode, so the destination would otherwise come
+        // back with whatever the umask allows. JetBrains deliberately keeps
+        // several roamable files at 0600 -- vcs.xml, github.xml, gitlab.xml,
+        // ide.general.xml -- and quietly republishing those as world-readable
+        // undoes a protection the platform chose on the user's behalf.
+        if let Ok(existing) = std::fs::metadata(path)
+            && let Err(error) = std::fs::set_permissions(&temporary, existing.permissions())
+        {
+            let _ = std::fs::remove_file(&temporary);
+            return Err(error.into());
+        }
         std::fs::rename(&temporary, path)?;
         Ok(())
     } else {
@@ -1055,6 +1104,56 @@ mod tests {
     fn display_path_hides_the_store_prefix() {
         assert_eq!(display_path("shared/options/laf.xml"), "options/laf.xml");
         assert_eq!(display_path("sync.toml"), "sync.toml");
+    }
+
+    #[test]
+    fn old_backup_runs_are_pruned_newest_first() {
+        let directory = tempfile::tempdir().unwrap();
+        for stamp in [
+            "20260101-000000",
+            "20260102-000000",
+            "20260103-000000",
+            "20260104-000000",
+        ] {
+            std::fs::create_dir_all(directory.path().join(stamp).join("IDE")).unwrap();
+        }
+        prune_backups(directory.path(), 2).unwrap();
+
+        let mut left: Vec<String> = std::fs::read_dir(directory.path())
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        left.sort();
+        assert_eq!(left, ["20260103-000000", "20260104-000000"]);
+    }
+
+    #[test]
+    fn pruning_backups_is_a_no_op_when_under_the_cap() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(directory.path().join("20260101-000000")).unwrap();
+        prune_backups(directory.path(), 10).unwrap();
+        assert!(directory.path().join("20260101-000000").exists());
+        // A missing directory is normal on a first run, not an error.
+        prune_backups(&directory.path().join("absent"), 10).unwrap();
+    }
+
+    /// JetBrains keeps several roamable files at 0600. Rewriting one through a
+    /// temporary file must not hand it back with the umask's permissions.
+    #[cfg(unix)]
+    #[test]
+    fn rewriting_a_file_keeps_its_permissions() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("vcs.xml");
+        write_or_remove(&path, Some(b"<a />")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+
+        write_or_remove(&path, Some(b"<b />")).unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "a private file must stay private");
     }
 
     #[test]

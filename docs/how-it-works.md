@@ -351,7 +351,11 @@ cannot be installed; anything else is a Marketplace plugin, and jbsync says so.
 ## 7. Safety
 
 - **Backups.** Every IDE file is copied to `~/.jbsync/backups/<timestamp>/`
-  before being overwritten.
+  before being overwritten. The ten most recent runs are kept; older ones are
+  removed so the directory cannot grow without bound.
+- **Permissions are preserved.** JetBrains keeps several roamable files at
+  `0600`. Rewriting one through a temporary file would otherwise hand it back
+  with the umask's permissions, undoing that.
 - **Surgical writes.** Incoming settings are applied leaf by leaf to your real
   file, so anything jbsync does not manage is left exactly as it was — including
   the content pruning kept out of the store.

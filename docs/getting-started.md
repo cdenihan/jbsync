@@ -115,6 +115,32 @@ $ jbsync sync
 The second machine adopts what is already published, and contributes anything
 it has that the first machine did not.
 
+### What actually leaves your machine
+
+Credentials do not: JetBrains keeps tokens and passwords in the OS keychain, not
+in the roamable XML, and jbsync excludes the files that do hold secrets
+(`idea.key`, `ssl/`).
+
+Identity does. A real store typically contains your GitHub and GitLab **account
+names and server hosts** (`options/github.xml`), and your SSH **hostnames and
+usernames** (`options/sshConfigs.xml`) — enough to describe your infrastructure,
+even though none of it can authenticate as you.
+
+So use a private repository, and check before making one public:
+
+```console
+$ ls ~/.jbsync/data/shared/options/
+$ git -C ~/.jbsync/data show --stat HEAD
+```
+
+To keep a file out entirely:
+
+```toml
+# sync.toml
+[jetbrains]
+exclude = ["options/sshConfigs.xml", "options/github.xml"]
+```
+
 Authentication is whatever already works for you — SSH agent, macOS Keychain,
 Windows Credential Manager, `gh auth`, a hardware key. jbsync runs the `git`
 you have installed rather than embedding its own client, so there are no

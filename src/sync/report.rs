@@ -67,6 +67,8 @@ pub struct SyncReport {
     pub ides: Vec<IdeReport>,
     pub published: Option<String>,
     pub plugins: Vec<String>,
+    /// Things that went wrong but did not stop the run.
+    pub warnings: Vec<String>,
 }
 
 impl SyncReport {
@@ -82,7 +84,8 @@ impl SyncReport {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.from_remote.iter().all(FileReport::is_empty)
+        self.warnings.is_empty()
+            && self.from_remote.iter().all(FileReport::is_empty)
             && self.ides.iter().all(IdeReport::is_empty)
             // An IDE left out of the run is news, even when nothing else moved.
             && self.ides.iter().all(|ide| ide.skipped.is_none())
@@ -475,6 +478,9 @@ pub fn render_with(report: &SyncReport, verbose: bool, style: Style) -> String {
     }
 
     output.push('\n');
+    for warning in &report.warnings {
+        let _ = writeln!(output, "{} {warning}", style.yellow("warning:"));
+    }
     if conflicts > 0 {
         let _ = writeln!(
             output,
