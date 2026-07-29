@@ -299,7 +299,7 @@ JBSYNC_CORPUS="$HOME/Library/Application Support/JetBrains" \
 
 Dependencies are kept deliberately small; distribution, self-update and the
 secure data directory come from
-[rust-cli-release](https://github.com/cdenihan/rust-cli-release).
+[rust-cli-toolkit](https://github.com/cdenihan/rust-cli-toolkit).
 
 ## License
 

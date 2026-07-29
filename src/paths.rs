@@ -1,10 +1,10 @@
 //! Where jbsync keeps its own local state, as distinct from the sync-data
 //! store the backend replicates. Mirrors XFER's `~/.xfer`-style layout via
-//! `rust_cli_release::SecureDir`.
+//! `rust_cli_toolkit::SecureDir`.
 
 use std::path::{Path, PathBuf};
 
-use rust_cli_release::{LockGuard, SecureDir};
+use rust_cli_toolkit::{LockGuard, SecureDir};
 
 use crate::{config::RepoConfig, error::Result};
 
