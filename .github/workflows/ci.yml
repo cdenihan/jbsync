@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  shared:
+    uses: cdenihan/rust-cli-release/.github/workflows/rust-ci.yml@v1.4.0
+    with:
+      binary-name: jbsync
+      display-name: jbsync
+      environment-prefix: JBSYNC
+    secrets:
+      dependency_token: ${{ secrets.RUST_CLI_RELEASE_TOKEN }}

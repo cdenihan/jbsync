@@ -1,0 +1,56 @@
+[package]
+name = "jbsync"
+version = "2026.7.28-1"
+edition = "2024"
+rust-version = "1.88"
+description = "Local-first settings and plugin sync for JetBrains IDEs"
+repository = "https://github.com/cdenihan/jbsync"
+readme = "README.md"
+keywords = ["jetbrains", "intellij", "sync", "cli", "dotfiles"]
+categories = ["command-line-utilities"]
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "jbsync"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+clap = { version = "4.6", features = ["derive", "env", "wrap_help"] }
+clap_complete = "4.6"
+dirs = "6.0"
+globset = "0.4"
+rust-cli-release = { git = "https://github.com/cdenihan/rust-cli-release", tag = "v1.4.0" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.11"
+tempfile = "3.27"
+thiserror = "2.0"
+toml = { version = "0.9", default-features = false, features = ["parse", "display", "serde"] }
+walkdir = "2.5"
+xmltree = "0.11"
+zip = { version = "6.0", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+assert_cmd = "2.2"
+predicates = "3.1"
+
+[build-dependencies]
+rust-cli-release = { git = "https://github.com/cdenihan/rust-cli-release", tag = "v1.4.0" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+too_many_lines = "allow"

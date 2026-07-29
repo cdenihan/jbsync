@@ -1,0 +1,22 @@
+[tools]
+rust = "stable"
+
+[tasks.build]
+description = "Build the debug binary"
+run = "cargo build"
+
+[tasks.test]
+description = "Run the test suite"
+run = "cargo test --locked --all-targets"
+
+[tasks.fmt]
+description = "Check formatting"
+run = "cargo fmt --all -- --check"
+
+[tasks.lint]
+description = "Run clippy with warnings denied"
+run = "cargo clippy --locked --all-targets --all-features -- -D warnings"
+
+[tasks.ci]
+description = "Run everything CI runs"
+depends = ["fmt", "lint", "test"]

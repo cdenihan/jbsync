@@ -1,0 +1,27 @@
+name: Prepare Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  actions: write
+  contents: write
+
+concurrency:
+  group: prepare-release-main
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    uses: cdenihan/rust-cli-release/.github/workflows/prepare-release.yml@v1.4.0
+    with:
+      binary-name: jbsync
+      display-name: jbsync
+      cargo-package: jbsync
+      environment-prefix: JBSYNC
+      version-mode: calendar
+      version-file: VERSION
+      publish-workflow: publish-release.yml
+    secrets:
+      dependency_token: ${{ secrets.RUST_CLI_RELEASE_TOKEN }}
