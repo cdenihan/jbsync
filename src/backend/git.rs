@@ -17,7 +17,7 @@ use std::{
     process::Command,
 };
 
-use rust_cli_release::{CommandError, CommandErrorKind, process as runner};
+use rust_cli_toolkit::{CommandError, CommandErrorKind, process as runner};
 
 use super::{Backend, Incoming, Published, Tree};
 use crate::error::{JbsyncError, Result};

@@ -43,8 +43,8 @@ impl JbsyncError {
     }
 }
 
-impl From<rust_cli_release::Error> for JbsyncError {
-    fn from(error: rust_cli_release::Error) -> Self {
+impl From<rust_cli_toolkit::Error> for JbsyncError {
+    fn from(error: rust_cli_toolkit::Error) -> Self {
         Self::Other(error.to_string())
     }
 }
