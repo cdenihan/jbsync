@@ -23,8 +23,18 @@ use super::{Backend, Incoming, Published, Tree};
 use crate::error::{JbsyncError, Result};
 
 /// Settings files are compared byte for byte across platforms, so Git must
-/// never translate line endings or apply filters to them.
-const GITATTRIBUTES: &str = "* -text -diff=auto\n";
+/// never translate line endings or apply filters to them. `-text` is the whole
+/// of that: it survives `core.autocrlf=true` on Windows with CRLF intact.
+///
+/// Nothing here touches `diff`. Git decides that for itself by looking for NUL
+/// bytes, which is the right answer for a store of XML and TOML.
+const GITATTRIBUTES: &str = "* -text\n";
+
+/// What earlier versions wrote. The trailing `-diff=auto` reads as "let Git
+/// choose" but a leading `-` *unsets* the attribute, and an unset `diff` means
+/// every path is binary — so `git log -p` on the store showed nothing but
+/// "Binary files differ". Replaced on sight, since no one chose it.
+const LEGACY_GITATTRIBUTES: &str = "* -text -diff=auto\n";
 
 pub struct GitBackend {
     workdir: PathBuf,
@@ -175,7 +185,11 @@ impl Backend for GitBackend {
             ])?;
         }
         let attributes = self.workdir.join(".gitattributes");
-        if !attributes.exists() {
+        // Only the exact legacy text is replaced: anything else in this file is
+        // someone's own decision and stays untouched.
+        let stale = std::fs::read_to_string(&attributes)
+            .is_ok_and(|contents| contents == LEGACY_GITATTRIBUTES);
+        if !attributes.exists() || stale {
             std::fs::write(&attributes, GITATTRIBUTES)?;
         }
         self.ensure_identity()?;
@@ -346,6 +360,57 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(directory.path().join(".gitattributes")).unwrap(),
             GITATTRIBUTES
+        );
+    }
+
+    #[test]
+    fn the_legacy_binary_diff_attribute_is_replaced() {
+        let directory = tempfile::tempdir().unwrap();
+        let attributes = directory.path().join(".gitattributes");
+        std::fs::write(&attributes, LEGACY_GITATTRIBUTES).unwrap();
+
+        let git = backend(directory.path(), None);
+        git.initialize().unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(&attributes).unwrap(),
+            GITATTRIBUTES,
+            "a store written by an older jbsync must stop diffing as binary"
+        );
+    }
+
+    #[test]
+    fn a_hand_written_gitattributes_is_left_alone() {
+        let directory = tempfile::tempdir().unwrap();
+        let attributes = directory.path().join(".gitattributes");
+        let mine = "* -text\n*.png binary\n";
+        std::fs::write(&attributes, mine).unwrap();
+
+        let git = backend(directory.path(), None);
+        git.initialize().unwrap();
+
+        assert_eq!(std::fs::read_to_string(&attributes).unwrap(), mine);
+    }
+
+    /// The reason `-text` is there at all: a CRLF file has to survive a
+    /// round-trip through the store byte for byte, even where Git is
+    /// configured to rewrite line endings.
+    #[test]
+    fn line_endings_survive_a_commit_and_checkout() {
+        let directory = tempfile::tempdir().unwrap();
+        let git = backend(directory.path(), None);
+        git.initialize().unwrap();
+        git.git(&["config", "core.autocrlf", "true"]).unwrap();
+
+        write(directory.path(), "shared/options/windows.xml", "a\r\nb\r\n");
+        git.publish("crlf").unwrap();
+        std::fs::remove_file(directory.path().join("shared/options/windows.xml")).unwrap();
+        git.git(&["checkout", "--", "."]).unwrap();
+
+        assert_eq!(
+            std::fs::read(directory.path().join("shared/options/windows.xml")).unwrap(),
+            b"a\r\nb\r\n",
+            "Git must not have touched the line endings"
         );
     }
 
