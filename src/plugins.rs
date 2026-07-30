@@ -261,6 +261,25 @@ pub fn bundled_ids(ide: &Ide) -> BTreeSet<String> {
     found
 }
 
+/// Bundled ids after `plugins.capability` removals, which is what decides
+/// whether an install is needed.
+///
+/// Deliberately narrower than [`capabilities`]: that set answers "can this IDE
+/// satisfy a dependency named X", and so also contains platform modules,
+/// modules other plugins provide, and configured additions. None of those mean
+/// the plugin itself is present, so none of them may suppress an install.
+fn bundled_here(ide: &Ide, config: &PluginsConfig) -> BTreeSet<String> {
+    let mut found = bundled_ids(ide);
+    for rule in &config.capability {
+        if targets_ide(&rule.ide, ide) {
+            for removed in &rule.remove {
+                found.remove(removed);
+            }
+        }
+    }
+    found
+}
+
 /// Third-party plugins installed into this IDE.
 pub fn installed(ide: &Ide, include_bundled: bool) -> BTreeMap<String, Plugin> {
     let bundled = bundled_ids(ide);
@@ -579,6 +598,7 @@ pub fn plan_installs(
     for ide in ides {
         let present = installed(ide, true);
         let capable = capabilities(ide, &present, &config.plugins);
+        let bundled = bundled_here(ide, &config.plugins);
         let directory = ide
             .path
             .file_name()
@@ -586,10 +606,10 @@ pub fn plan_installs(
             .unwrap_or_default();
         for plugin in &manifest.plugins {
             // `present` only covers the config `plugins/` directory, so a
-            // bundled plugin looks missing there. `capable` includes the
-            // product's bundled ids, and installing over one is a no-op the
-            // launcher rejects with "already installed" on every run.
-            if present.contains_key(&plugin.id) || capable.contains(&plugin.id) {
+            // bundled plugin looks missing there. Installing over one is a
+            // no-op the launcher rejects with "already installed" on every
+            // run.
+            if present.contains_key(&plugin.id) || bundled.contains(&plugin.id) {
                 continue;
             }
             let verdict = compatibility(plugin, ide, &capable, &managed, &config.plugins);
@@ -786,6 +806,63 @@ mod tests {
             actions.is_empty(),
             "bundled plugin should need no install: {actions:?}"
         );
+    }
+
+    #[test]
+    fn a_capability_alone_does_not_suppress_an_install() {
+        // `capabilities` answers "can a dependency named X be satisfied", so it
+        // holds platform modules, modules other plugins provide, and configured
+        // additions. None of those mean the plugin itself is there, and using
+        // that set to skip would drop the install without even reporting it.
+        let directory = tempfile::tempdir().unwrap();
+        let mut pycharm = ide_with("252.1", "PyCharm", &["com.intellij.modules.python"]);
+        pycharm.path = directory.path().join("PyCharm2026.2");
+
+        let config = SyncConfig {
+            plugins: PluginsConfig {
+                capability: vec![crate::config::PluginCapability {
+                    ide: "*".to_string(),
+                    add: vec!["com.example.tool".to_string()],
+                    remove: Vec::new(),
+                }],
+                ..PluginsConfig::default()
+            },
+            ..SyncConfig::default()
+        };
+        let manifest = Manifest {
+            version: 1,
+            plugins: vec![parse_descriptor(MODERN, "x").unwrap()],
+        };
+        let actions = plan_installs(&[&pycharm], &manifest, &config);
+        assert_eq!(actions.len(), 1, "{actions:?}");
+        assert!(actions[0].install, "{}", actions[0].reason);
+    }
+
+    #[test]
+    fn removing_a_bundled_capability_forces_the_install_back() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut pycharm = ide_with("252.1", "PyCharm", &["com.intellij.modules.python"]);
+        pycharm.path = directory.path().join("PyCharm2026.2");
+        pycharm.metadata.as_mut().unwrap().bundled_plugins = vec!["com.example.tool".to_string()];
+
+        let config = SyncConfig {
+            plugins: PluginsConfig {
+                capability: vec![crate::config::PluginCapability {
+                    ide: "PyCharm*".to_string(),
+                    add: Vec::new(),
+                    remove: vec!["com.example.tool".to_string()],
+                }],
+                ..PluginsConfig::default()
+            },
+            ..SyncConfig::default()
+        };
+        let manifest = Manifest {
+            version: 1,
+            plugins: vec![parse_descriptor(MODERN, "x").unwrap()],
+        };
+        let actions = plan_installs(&[&pycharm], &manifest, &config);
+        assert_eq!(actions.len(), 1, "an explicit removal overrides bundling");
+        assert_eq!(actions[0].plugin, "com.example.tool");
     }
 
     #[test]
