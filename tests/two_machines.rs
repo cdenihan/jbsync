@@ -68,6 +68,20 @@ impl Machine {
         std::fs::write(path, document).unwrap();
     }
 
+    /// Writes a settings file verbatim, for shapes `write_option` cannot
+    /// express — `project.default.xml` nests a component per project setting
+    /// inside `<component name="ProjectManager"><defaultProject>`.
+    fn write_file(&self, ide: &str, file: &str, body: &str) {
+        let path = self.jetbrains_root.join(ide).join("options").join(file);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, body).unwrap();
+    }
+
+    fn read_file(&self, ide: &str, file: &str) -> String {
+        let path = self.jetbrains_root.join(ide).join("options").join(file);
+        std::fs::read_to_string(path).unwrap_or_default()
+    }
+
     /// The value of one setting as the IDE currently has it on disk.
     fn read_option(&self, ide: &str, file: &str, setting: &str) -> Option<String> {
         let path = self.jetbrains_root.join(ide).join("options").join(file);
@@ -642,4 +656,67 @@ fn a_dry_run_predicts_exactly_what_a_real_sync_does() {
             "{line} is reported in both directions"
         );
     }
+}
+
+/// The reason `project.default.xml` is synced at all: *Settings for New
+/// Projects* are choices, and before this they were the one class of setting
+/// jbsync could see and still declined to carry.
+///
+/// The same file holds dialog geometry in this machine's screen coordinates,
+/// which is why the platform skips it wholesale. Pruning per component instead
+/// of per file is what makes the trade unnecessary — so both halves are
+/// asserted here, in both directions.
+#[test]
+fn settings_for_new_projects_reach_another_machine_without_the_dialog_state() {
+    const DEFAULT_PROJECT: &str = r##"<?xml version='1.0' encoding='utf-8'?>
+<application>
+  <component name="ProjectManager">
+    <defaultProject>
+      <component name="TypeScriptCompiler">
+        <option name="memoryAutoIncrease" value="true" />
+      </component>
+      <component name="WindowStateProjectService">
+        <state x="356" y="76" key="#Plugins" timestamp="1785330308665">
+          <screen x="0" y="33" width="1512" height="876" />
+        </state>
+      </component>
+    </defaultProject>
+  </component>
+</application>"##;
+
+    let remote = bare_remote();
+    let first = Machine::new(remote.path(), &["WebStorm2026.2"]);
+    first.write_file("WebStorm2026.2", "project.default.xml", DEFAULT_PROJECT);
+    first.sync();
+
+    let second = Machine::new(remote.path(), &["WebStorm2026.2"]);
+    second.sync();
+
+    assert_eq!(
+        second
+            .read_option(
+                "WebStorm2026.2",
+                "project.default.xml",
+                "New Projects/TypeScriptCompiler/memoryAutoIncrease"
+            )
+            .as_deref(),
+        Some("true"),
+        "the setting the user chose has to arrive"
+    );
+    // Asserted against the file's text rather than a projected address: the
+    // claim is that none of this component reached the other machine, and a
+    // mistyped address would make a narrower assertion pass for free.
+    let arrived = second.read_file("WebStorm2026.2", "project.default.xml");
+    assert!(
+        !arrived.contains("WindowStateProjectService"),
+        "another machine's window position must not arrive with it: {arrived}"
+    );
+
+    // Pruning decides what is shared, never what an IDE keeps: the machine that
+    // published still has its own geometry, untouched.
+    let published_from = first.read_file("WebStorm2026.2", "project.default.xml");
+    assert!(
+        published_from.contains(r##"<state x="356" y="76" key="#Plugins""##),
+        "the local file is filtered on the way into the store, not edited: {published_from}"
+    );
 }

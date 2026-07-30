@@ -12,7 +12,9 @@
 //!     (tutorial progress, inlay-hint tables);
 //!   * values the IDE set for itself rather than for the user (registry keys
 //!     carrying `source="SYSTEM"` or `"MANAGER"`, one-shot migration flags);
-//!   * components that persist only a schema version and no settings.
+//!   * components that persist only a schema version and no settings;
+//!   * dialog state the platform files alongside real settings, which is what
+//!     `project.default.xml` needs before it can be shared at all.
 //!
 //! Rules are data, so covering a newly noisy component is a table entry here
 //! or an `[[xml.omit]]` block in `sync.toml` — never a new code path.
@@ -77,6 +79,49 @@ const BUILTINS: &[Builtin] = &[
         attribute: "key",
         equals: "JAVA",
         reason: "per-installation language state",
+    },
+    // `project.default.xml` is the template every new project starts from, so
+    // most of it is a genuine choice — but the platform stores dialog state in
+    // the same file. These four are the ones that appear there, identical
+    // across IntelliJ IDEA, PyCharm, CLion, RustRover and WebStorm. Each is
+    // dropped as a whole component: none of them has a leaf worth keeping, and
+    // matching the component is what makes the rule survive JetBrains adding
+    // another field to it.
+    Builtin {
+        file: "options/project.default.xml",
+        component: None,
+        element: "component",
+        attribute: "name",
+        equals: "WindowStateProjectService",
+        reason: "dialog geometry, in this machine's screen coordinates",
+    },
+    Builtin {
+        file: "options/project.default.xml",
+        component: None,
+        element: "component",
+        attribute: "name",
+        equals: "masterDetails",
+        reason: "splitter positions in the settings dialog",
+    },
+    Builtin {
+        file: "options/project.default.xml",
+        component: None,
+        element: "component",
+        attribute: "name",
+        equals: "ProjectInspectionProfilesVisibleTreeState",
+        reason: "which inspection tree nodes were left expanded",
+    },
+    // One `#text` leaf holding a whole JSON document, so two machines editing
+    // different keys inside it could only ever conflict over the entire blob.
+    // That is the same objection that keeps `llm.*.xml` out of the manifest,
+    // and it carries machine-local paths and dialog state besides.
+    Builtin {
+        file: "options/project.default.xml",
+        component: None,
+        element: "component",
+        attribute: "name",
+        equals: "PropertiesComponent",
+        reason: "opaque JSON blob of UI state and machine-local paths",
     },
 ];
 
@@ -193,10 +238,11 @@ pub fn prune_document(
         }
     }
 
-    // Prune bottom-up first: a component only looks settingless once the
-    // wrappers its removed entries lived in have themselves gone.
-    project::prune_empty(root);
-    drop_settingless_components(root, &mut removed);
+    // Bottom-up: a component only looks settingless once the wrappers its
+    // removed entries lived in have themselves gone, and a wrapper only looks
+    // empty once the settingless components inside it have gone. Doing both in
+    // one upward pass settles that mutual dependency at every depth.
+    clear_out(root, &mut removed);
 
     PruneOutcome {
         is_empty: root.children.is_empty() && root.attributes.is_empty(),
@@ -273,9 +319,23 @@ fn describe(parent_path: &str, element: &Element) -> String {
     }
 }
 
-/// Drops components that persist a schema version but no settings.
-fn drop_settingless_components(root: &mut Element, removed: &mut Vec<Removal>) {
-    root.children.retain(|child| {
+/// Removes everything left holding nothing: containers a rule emptied, and
+/// components that persist a schema version but no settings.
+///
+/// Children are cleared before their parent is judged, so one pass is enough
+/// however deep the nesting goes. Depth matters for `project.default.xml`,
+/// where a component sits inside `<defaultProject>` inside another component:
+/// emptying the innermost one has to retire both the wrapper around it and the
+/// `ProjectManager` shell around that, or the file never reduces to "no
+/// opinion" and every machine keeps publishing an empty skeleton.
+fn clear_out(element: &mut Element, removed: &mut Vec<Removal>) {
+    for child in &mut element.children {
+        clear_out(child, removed);
+    }
+    element.children.retain(|child| {
+        if child.is_valueless() {
+            return false;
+        }
         let settingless = child.name == "component"
             && child.children.is_empty()
             && child.text.is_none()
@@ -439,6 +499,138 @@ mod tests {
                </application>"#,
         );
         assert!(outcome.is_empty);
+    }
+
+    /// Shaped like the real file: `<defaultProject>` holds a component per
+    /// project setting, mixed in with the dialog state the platform keeps
+    /// beside them.
+    fn default_project(body: &str) -> String {
+        format!(
+            r#"<application>
+                 <component name="ProjectManager">
+                   <defaultProject>{body}</defaultProject>
+                 </component>
+               </application>"#
+        )
+    }
+
+    #[test]
+    fn settings_for_new_projects_are_kept_and_dialog_state_is_not() {
+        let (root, outcome) = prune(
+            "options/project.default.xml",
+            &default_project(
+                r##"<component name="TypeScriptCompiler">
+                     <option name="memoryAutoIncrease" value="true" />
+                   </component>
+                   <component name="FormatOnSaveOptions">
+                     <option name="myRunOnSave" value="true" />
+                   </component>
+                   <component name="WindowStateProjectService">
+                     <state x="356" y="76" key="#Plugins" timestamp="1785330308665">
+                       <screen x="0" y="33" width="1512" height="876" />
+                     </state>
+                   </component>
+                   <component name="masterDetails">
+                     <states><state key="Copyright.UI" /></states>
+                   </component>
+                   <component name="ProjectInspectionProfilesVisibleTreeState">
+                     <entry key="Project Default" />
+                   </component>
+                   <component name="PropertiesComponent">{"keyToString": {"a": "b"}}</component>"##,
+            ),
+        );
+
+        let kept: Vec<String> = project::project(&root)
+            .into_keys()
+            .map(|address| project::sugar(&address))
+            .collect();
+        assert_eq!(
+            kept,
+            vec![
+                "New Projects/FormatOnSaveOptions/myRunOnSave".to_string(),
+                "New Projects/TypeScriptCompiler/memoryAutoIncrease".to_string(),
+            ],
+            "only the settings survive, and they read like the settings UI"
+        );
+        assert!(!outcome.is_empty);
+        // Every removal names the component it took out, so `status --verbose`
+        // can explain the file rather than just shrinking it.
+        let removed: Vec<&str> = outcome
+            .removed
+            .iter()
+            .map(|removal| removal.path.as_str())
+            .collect();
+        assert!(
+            removed.contains(&"ProjectManager/defaultProject/WindowStateProjectService"),
+            "{removed:?}"
+        );
+        assert!(
+            removed.contains(&"ProjectManager/defaultProject/PropertiesComponent"),
+            "{removed:?}"
+        );
+    }
+
+    /// The wrappers are three deep, so emptying the innermost component has to
+    /// retire `<defaultProject>` and the `ProjectManager` shell as well.
+    /// Otherwise the file never reduces to "no opinion" and every machine keeps
+    /// republishing an empty skeleton.
+    #[test]
+    fn a_default_project_holding_only_dialog_state_has_no_opinion() {
+        let (root, outcome) = prune(
+            "options/project.default.xml",
+            &default_project(
+                r##"<component name="WindowStateProjectService">
+                     <state x="356" y="76" key="#Plugins" />
+                   </component>
+                   <component name="masterDetails">
+                     <states><state key="Copyright.UI" /></states>
+                   </component>"##,
+            ),
+        );
+        assert!(
+            outcome.is_empty,
+            "left {:?}",
+            crate::xml::dom::serialize(&root)
+        );
+    }
+
+    /// The rules are written against the component, not against the fields
+    /// inside it, so a component the platform grows a new field for still goes
+    /// wholesale rather than leaking the addition.
+    #[test]
+    fn dialog_state_goes_wholesale_even_with_unfamiliar_fields() {
+        let (root, _) = prune(
+            "options/project.default.xml",
+            &default_project(
+                r##"<component name="WindowStateProjectService">
+                     <state key="#Plugins" somethingNew="17" />
+                     <freshElement value="7" />
+                   </component>
+                   <component name="AutoImportSettings">
+                     <option name="autoReloadType" value="SELECTIVE" />
+                   </component>"##,
+            ),
+        );
+        let kept = project::project(&root);
+        assert_eq!(kept.len(), 1);
+        assert!(
+            !kept.keys().any(|address| address.contains("WindowState")),
+            "{kept:?}"
+        );
+    }
+
+    /// Same component name, different file: `PropertiesComponent` in
+    /// `other.xml` is application state jbsync has never claimed to prune, and
+    /// the new rules must not start reaching into it.
+    #[test]
+    fn the_default_project_rules_are_scoped_to_that_file() {
+        let (root, _) = prune(
+            "options/other.xml",
+            r#"<application>
+                 <component name="PropertiesComponent">{"keyToString": {"a": "b"}}</component>
+               </application>"#,
+        );
+        assert_eq!(root.children.len(), 1);
     }
 
     #[test]

@@ -39,6 +39,46 @@ exclude = ["options/databaseSettings.xml"]
 
 The machine name is the one in the report header, and in `jbsync init` output.
 
+## Share a per-project setting, like the TypeScript service memory limit
+
+Some settings are project-scoped even though you reach them from the same
+Settings dialog — WebStorm's *Languages & Frameworks → TypeScript → Language
+Services Memory* is one. Changing one with a project open writes it into that
+project's `.idea/` directory, which travels with the project's own repository.
+jbsync never reads project directories, so it will not see it.
+
+Set it as a **default for new projects** instead, and it syncs:
+
+*File → New Projects Setup → Settings for New Projects…*, then the same page.
+
+That writes `options/project.default.xml`, which jbsync shares with the dialog
+geometry pruned out. Existing projects keep whatever they already have; every
+project you create from then on starts from the synced value.
+
+```console
+$ jbsync status --verbose
+```
+
+Look for `New Projects/...` in the report — that prefix is this file.
+
+## Stop sharing settings for new projects
+
+```toml
+# sync.toml
+[jetbrains]
+exclude = ["options/project.default.xml"]
+```
+
+Or drop one component of it rather than the file:
+
+```toml
+[[xml.omit]]
+file = "options/project.default.xml"
+element = "component"
+attribute = "name"
+equals = "VcsManagerConfiguration"
+```
+
 ## Sync a file jbsync ignores
 
 ```toml

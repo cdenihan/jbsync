@@ -38,18 +38,28 @@ pub const DELETED_TOMBSTONE: &str = "DELETED";
 /// Fallback allowlist, used only when no installed IDE has a `settingsSync`
 /// tree to learn from.
 ///
-/// This mirrors what the platform actually roams. It is deliberately *not*
-/// `options/*.xml`: JetBrains excludes plenty of files in that directory —
-/// `other.xml` holds per-machine UI state, `llm.*.xml` holds opaque JSON blobs
-/// — and syncing them produces noise and unresolvable conflicts.
+/// This mirrors what the platform actually roams, save for the one documented
+/// exception below. It is deliberately *not* `options/*.xml`: JetBrains
+/// excludes plenty of files in that directory — `other.xml` holds per-machine
+/// UI state, `llm.*.xml` holds opaque JSON blobs — and syncing them produces
+/// noise and unresolvable conflicts.
 ///
 /// Every entry here has been checked against real `settingsSync` trees: a file
 /// that exists in an IDE's `options/` but never appears in that IDE's
 /// `settingsSync/` is one the platform declines to roam, and does not belong
-/// here. `project.default.xml` (nested per-project components and a JSON blob
-/// of machine-local paths), `find.xml` (search history), `advancedSettings.xml`,
+/// here. `find.xml` (search history), `advancedSettings.xml`,
 /// `console-font.xml`, `terminal-font.xml` and `textmate.xml` all failed that
 /// check across four products and were removed.
+///
+/// `project.default.xml` is the one deliberate exception, and the reasoning is
+/// worth stating because it breaks the rule above. The platform declines to
+/// roam it, but not because it holds nothing worth roaming: it holds *Settings
+/// for New Projects*, the template every project you create starts from, and
+/// those are choices in exactly the sense the rest of this list is about. What
+/// it also holds is dialog geometry and an opaque JSON blob, which is reason
+/// enough for the platform to skip the file wholesale. jbsync does not have to
+/// make that trade, because it prunes per component rather than per file — see
+/// the `project.default.xml` rules in `settings::prune`.
 const BUILTIN_MANIFEST: &[&str] = &[
     "codestyles/**",
     "colors/**",
@@ -78,6 +88,7 @@ const BUILTIN_MANIFEST: &[&str] = &[
     "options/ide.general.xml",
     "options/IntelliLang.xml",
     "options/laf.xml",
+    "options/project.default.xml",
     "options/sshConfigs.xml",
     "options/terminal.xml",
     "options/ui.lnf.xml",
@@ -430,6 +441,27 @@ mod tests {
         );
         assert!(!found.keys().any(|key| key.starts_with("plugins/")));
         assert!(!found.contains_key("idea.key"), "credentials never sync");
+    }
+
+    /// The platform does not roam this file, so no `settingsSync` tree will
+    /// ever contribute it and the built-in floor is the only thing that can.
+    /// Losing this entry silently stops *Settings for New Projects* syncing.
+    #[test]
+    fn settings_for_new_projects_are_in_the_builtin_floor() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        std::fs::create_dir_all(root.join("options")).unwrap();
+        std::fs::write(root.join("options/project.default.xml"), "<application />").unwrap();
+
+        let ide = ide_at(root, "WebStorm", "webstorm.vmoptions");
+        // Not just present in the list: still selected once an IDE with a
+        // narrower learned tree has had its say.
+        let manifest = learned_manifest(&[&ide], &["options/laf.xml".to_string()]);
+        assert!(
+            discover(&ide, &SyncConfig::default(), &manifest)
+                .unwrap()
+                .contains_key("options/project.default.xml")
+        );
     }
 
     #[test]
