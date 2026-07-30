@@ -85,6 +85,16 @@ component JetBrains grows a new field for still goes wholesale. Should a future
 release add a fifth, an `[[xml.omit]]` block covers it without waiting for a
 jbsync release.
 
+**What the last row costs.** `PropertiesComponent` is a single JSON document
+held in one XML text node, and everything here — pruning, merging, reporting,
+conflict resolution — addresses XML leaves. Dropping it therefore drops a few
+genuine choices along with the noise, of which `rearrange.code.on.save` is the
+one worth knowing: the third checkbox in *Actions on Save*, whose two siblings
+do sync. Filtering by key would still leave one unmergeable leaf, and would have
+to choose between leaking the absolute paths some of those keys hold and
+silently dropping keys JetBrains adds later. Per-key handling is a change of its
+own, not a line in this table.
+
 Two things this is **not**. It is not a project sync: settings inside a
 particular project live in that project's `.idea/` directory, they travel with
 the project's own repository, and jbsync never reads them. And, as everywhere

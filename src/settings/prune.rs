@@ -111,10 +111,22 @@ const BUILTINS: &[Builtin] = &[
         equals: "ProjectInspectionProfilesVisibleTreeState",
         reason: "which inspection tree nodes were left expanded",
     },
-    // One `#text` leaf holding a whole JSON document, so two machines editing
-    // different keys inside it could only ever conflict over the entire blob.
-    // That is the same objection that keeps `llm.*.xml` out of the manifest,
-    // and it carries machine-local paths and dialog state besides.
+    // One `#text` leaf holding a whole JSON document. Everything here —
+    // pruning, merging, reporting, conflict resolution — addresses XML leaves,
+    // so nothing inside that blob can be reached without a second
+    // implementation of all four. That is the same objection that keeps
+    // `llm.*.xml` out of the manifest.
+    //
+    // This one is not free, and the cost is worth naming: the blob mixes real
+    // choices (`rearrange.code.on.save`, the third checkbox in Actions on Save,
+    // whose two siblings *are* synced above) with pure dialog state
+    // (`settings.editor.selected.configurable`, which changes every time you
+    // open a different settings page) and with keys that hold absolute paths on
+    // machines where the package was not auto-detected. Filtering by key would
+    // still leave one unmergeable leaf, and would have to choose between
+    // leaking those paths and silently dropping keys JetBrains adds later.
+    // Sharing settings this file *can* represent beats sharing none of it; if
+    // per-key handling is ever worth building, it belongs in its own change.
     Builtin {
         file: "options/project.default.xml",
         component: None,

@@ -720,3 +720,124 @@ fn settings_for_new_projects_reach_another_machine_without_the_dialog_state() {
         "the local file is filtered on the way into the store, not edited: {published_from}"
     );
 }
+
+/// A machine whose own copy of a file is all residue must still *receive*.
+///
+/// "Everything in it was pruned" means the IDE has no opinion, which is a
+/// reason not to publish and no reason at all to refuse what others published.
+/// `project.default.xml` makes the distinction matter: plenty of IDEs have
+/// dialog geometry in theirs and nothing else, and those are exactly the ones
+/// that need the settings for new projects to arrive.
+#[test]
+fn an_ide_holding_only_residue_still_adopts_what_others_published() {
+    const UI_STATE_ONLY: &str = r##"<?xml version='1.0' encoding='utf-8'?>
+<application>
+  <component name="ProjectManager">
+    <defaultProject>
+      <component name="WindowStateProjectService">
+        <state x="1" y="2" key="#Plugins" />
+      </component>
+    </defaultProject>
+  </component>
+</application>"##;
+    const WITH_SETTING: &str = r#"<?xml version='1.0' encoding='utf-8'?>
+<application>
+  <component name="ProjectManager">
+    <defaultProject>
+      <component name="TypeScriptCompiler">
+        <option name="memoryAutoIncrease" value="true" />
+      </component>
+    </defaultProject>
+  </component>
+</application>"#;
+
+    let remote = bare_remote();
+    let first = Machine::new(remote.path(), &["WebStorm2026.2"]);
+    first.write_file("WebStorm2026.2", "project.default.xml", WITH_SETTING);
+    first.sync();
+
+    let second = Machine::new(remote.path(), &["WebStorm2026.2"]);
+    second.write_file("WebStorm2026.2", "project.default.xml", UI_STATE_ONLY);
+    second.sync();
+
+    assert_eq!(
+        second
+            .read_option(
+                "WebStorm2026.2",
+                "project.default.xml",
+                "New Projects/TypeScriptCompiler/memoryAutoIncrease"
+            )
+            .as_deref(),
+        Some("true"),
+        "an IDE with nothing to say must still be told"
+    );
+    // And it published nothing of its own: the geometry stayed at home.
+    let stored = std::fs::read_to_string(
+        Engine::open(Some(second.config_dir.clone()))
+            .unwrap()
+            .store_root()
+            .join("shared/options/project.default.xml"),
+    )
+    .unwrap();
+    assert!(!stored.contains("WindowStateProjectService"), "{stored}");
+}
+
+/// Excluding a file has to keep working after somebody else publishes it.
+///
+/// Discovery leaves the file out, but the store contributes its own list of
+/// paths to reconcile. Without the exclusion applying to those too, the file
+/// arrives from the store and is written into the very IDE that excluded it.
+#[test]
+fn an_exclusion_holds_even_once_another_machine_has_published_the_file() {
+    let remote = bare_remote();
+    let first = Machine::new(remote.path(), &["IntelliJIdea2026.2"]);
+    first.write_option(
+        "IntelliJIdea2026.2",
+        "editor-font.xml",
+        "DefaultFontConfiguration",
+        &[("FONT_SIZE", "18")],
+    );
+    first.write_option(
+        "IntelliJIdea2026.2",
+        "editor.xml",
+        "Editor",
+        &[("tabs", "2")],
+    );
+    first.sync();
+
+    let second = Machine::new(remote.path(), &["IntelliJIdea2026.2"]);
+    std::fs::write(
+        second.config_dir.join("config.toml"),
+        format!(
+            "[repo]\nremote = {:?}\n\n[jetbrains]\nroot = {:?}\n\n[machine]\nid = \"laptop\"\n",
+            remote.path().to_string_lossy(),
+            second.jetbrains_root.to_string_lossy()
+        ),
+    )
+    .unwrap();
+    let store = Engine::open(Some(second.config_dir.clone()))
+        .unwrap()
+        .store_root()
+        .to_path_buf();
+    std::fs::create_dir_all(store.join("machines")).unwrap();
+    std::fs::write(
+        store.join("machines/laptop.toml"),
+        "[jetbrains]\nexclude = [\"options/editor-font.xml\"]\n",
+    )
+    .unwrap();
+    second.sync();
+
+    assert!(
+        second
+            .read_file("IntelliJIdea2026.2", "editor-font.xml")
+            .is_empty(),
+        "an excluded file must not be created from the store"
+    );
+    assert_eq!(
+        second
+            .read_option("IntelliJIdea2026.2", "editor.xml", "Editor/tabs")
+            .as_deref(),
+        Some("2"),
+        "and everything else must still arrive"
+    );
+}

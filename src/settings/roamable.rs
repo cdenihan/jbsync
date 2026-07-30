@@ -295,21 +295,54 @@ pub fn observed_manifest(ides: &[&Ide]) -> Vec<String> {
 ///
 /// `manifest` comes from [`learned_manifest`]; passing an empty slice falls
 /// back to the built-in list.
-pub fn discover(
-    ide: &Ide,
-    config: &SyncConfig,
-    manifest: &[String],
-) -> Result<BTreeMap<String, PathBuf>> {
-    let excludes = {
+/// The configured include/exclude decision, built once from `sync.toml` and the
+/// per-machine override folded into it.
+struct Filter {
+    excludes: globset::GlobSet,
+    explicit: globset::GlobSet,
+}
+
+impl Filter {
+    fn new(config: &SyncConfig) -> Result<Self> {
         let mut patterns: Vec<String> = if config.jetbrains.use_default_excludes {
             EXCLUDES.iter().map(|value| (*value).to_string()).collect()
         } else {
             Vec::new()
         };
         patterns.extend(config.jetbrains.exclude.clone());
-        glob_set(&patterns)?
-    };
-    let explicit = glob_set(&config.jetbrains.explicit_include)?;
+        Ok(Self {
+            excludes: glob_set(&patterns)?,
+            explicit: glob_set(&config.jetbrains.explicit_include)?,
+        })
+    }
+
+    /// True when configuration says this IDE-relative path must not sync.
+    /// `explicit_include` wins, which is what makes it an escape hatch.
+    fn rejects(&self, relative: &str) -> bool {
+        !self.explicit.is_match(relative) && self.excludes.is_match(relative)
+    }
+}
+
+/// Whether a file already in the store must be kept away from this IDE.
+///
+/// Discovery asks the same question on the way *out* of an IDE, and it has to
+/// be asked again on the way *in*. The store contributes its own list of paths
+/// to reconcile, so a file another machine published would otherwise be merged
+/// into — and created inside — an IDE whose configuration excluded it, and the
+/// exclusion would appear to work only until somebody else published the file.
+///
+/// The manifest deliberately does not apply here: a file being in the store is
+/// itself the evidence that it roams.
+pub fn is_excluded(relative: &str, ide: &Ide, config: &SyncConfig) -> Result<bool> {
+    Ok(Filter::new(config)?.rejects(&target_relative_path(relative, ide, config)))
+}
+
+pub fn discover(
+    ide: &Ide,
+    config: &SyncConfig,
+    manifest: &[String],
+) -> Result<BTreeMap<String, PathBuf>> {
+    let filter = Filter::new(config)?;
 
     let mut patterns: Vec<String> = if manifest.is_empty() {
         BUILTIN_MANIFEST
@@ -332,8 +365,8 @@ pub fn discover(
         if !absolute.is_file() {
             continue;
         }
-        let explicitly_included = explicit.is_match(&relative);
-        if !explicitly_included && (excludes.is_match(&relative) || !manifest.is_match(&relative)) {
+        let explicitly_included = filter.explicit.is_match(&relative);
+        if filter.rejects(&relative) || !(explicitly_included || manifest.is_match(&relative)) {
             continue;
         }
         selected.insert(canonical_relative_path(&relative, ide, config), absolute);
