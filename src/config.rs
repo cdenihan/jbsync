@@ -3,7 +3,7 @@
 //! a `sync.toml` that lives *inside* the sync-data store and therefore
 //! replicates to every machine automatically.
 
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{collections::BTreeMap, fmt::Write as _, path::PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -180,6 +180,54 @@ pub struct PluginRule {
     pub action: String,
 }
 
+/// What happened when a rule was written, so the caller can say so.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuleWrite {
+    Added,
+    /// The identical rule was already there, so the file was left alone.
+    AlreadyPresent,
+}
+
+/// Appends a `[[plugins.rule]]` block to `sync.toml`.
+///
+/// Appends rather than re-serializing the whole config: `SyncConfig` would
+/// round-trip every default into the file and drop the comments a person wrote
+/// there. A new array-of-tables at the end is valid TOML whatever precedes it,
+/// and last-match-wins means a later rule is also the one that takes effect.
+pub fn append_plugin_rule(path: &std::path::Path, rule: &PluginRule) -> Result<RuleWrite> {
+    let existing: SyncConfig = read_toml(path)?;
+    if existing.plugins.rule.iter().any(|current| {
+        current.id == rule.id && current.ide == rule.ide && current.action == rule.action
+    }) {
+        return Ok(RuleWrite::AlreadyPresent);
+    }
+
+    let mut contents = if path.exists() {
+        std::fs::read_to_string(path)?
+    } else {
+        String::new()
+    };
+    if !contents.is_empty() && !contents.ends_with('\n') {
+        contents.push('\n');
+    }
+    if !contents.is_empty() {
+        contents.push('\n');
+    }
+    let _ = write!(
+        contents,
+        "[[plugins.rule]]\nid = \"{}\"\nide = \"{}\"\naction = \"{}\"\n",
+        toml_escape(&rule.id),
+        toml_escape(&rule.ide),
+        toml_escape(&rule.action)
+    );
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(path, contents)?;
+    Ok(RuleWrite::Added)
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct PluginCapability {
     #[serde(default = "wildcard")]
@@ -192,6 +240,12 @@ pub struct PluginCapability {
 
 fn wildcard() -> String {
     "*".to_string()
+}
+
+/// Escapes the two characters that can end a TOML basic string early. Globs
+/// bring `*`, `?` and brackets, none of which need escaping.
+fn toml_escape(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -319,6 +373,61 @@ mod tests {
         assert!(config.jetbrains.backups);
         assert!(config.jetbrains.use_default_excludes);
         assert!(config.plugins.enabled);
+    }
+
+    #[test]
+    fn appending_a_rule_keeps_the_comments_around_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("sync.toml");
+        std::fs::write(&path, "# hand written\n[jetbrains]\nbackups = false\n").unwrap();
+
+        let rule = PluginRule {
+            id: "com.falsepattern.zigbrains".to_string(),
+            ide: "CLion*".to_string(),
+            action: "only".to_string(),
+        };
+        assert_eq!(append_plugin_rule(&path, &rule).unwrap(), RuleWrite::Added);
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("# hand written"), "{text}");
+        let loaded = SyncConfig::load(&path).unwrap();
+        assert!(!loaded.jetbrains.backups, "existing settings must survive");
+        assert_eq!(loaded.plugins.rule.len(), 1);
+        assert_eq!(loaded.plugins.rule[0].action, "only");
+        assert_eq!(loaded.plugins.rule[0].ide, "CLion*");
+    }
+
+    #[test]
+    fn appending_the_same_rule_twice_changes_nothing() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("sync.toml");
+        let rule = PluginRule {
+            id: "com.example.tool".to_string(),
+            ide: "*".to_string(),
+            action: "deny".to_string(),
+        };
+        append_plugin_rule(&path, &rule).unwrap();
+        let once = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            append_plugin_rule(&path, &rule).unwrap(),
+            RuleWrite::AlreadyPresent
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), once);
+    }
+
+    #[test]
+    fn a_rule_written_into_a_missing_file_still_parses() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("nested").join("sync.toml");
+        let rule = PluginRule {
+            id: "com.example.tool".to_string(),
+            ide: "RustRover*".to_string(),
+            action: "only".to_string(),
+        };
+        append_plugin_rule(&path, &rule).unwrap();
+        let loaded = SyncConfig::load(&path).unwrap();
+        assert_eq!(loaded.plugins.rule.len(), 1);
+        assert_eq!(loaded.plugins.rule[0].id, "com.example.tool");
     }
 
     #[test]

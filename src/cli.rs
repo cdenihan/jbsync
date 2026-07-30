@@ -3,7 +3,8 @@ use std::path::PathBuf;
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 
 use crate::{
-    config::LocalConfig,
+    config,
+    config::{LocalConfig, PluginRule},
     error::Result,
     paths::Paths,
     plugins,
@@ -97,7 +98,10 @@ enum Command {
         action: RepoAction,
     },
     /// Show the recorded plugins and which IDEs are missing them.
-    Plugins,
+    Plugins {
+        #[command(subcommand)]
+        action: Option<PluginAction>,
+    },
     /// Turn off JetBrains' bundled Backup and Sync so the two do not fight.
     DisableBuiltinSync {
         #[arg(long)]
@@ -130,6 +134,34 @@ enum RepoAction {
     },
     /// Stop publishing to a remote and keep the store local.
     Unset,
+}
+
+#[derive(Debug, Subcommand)]
+enum PluginAction {
+    /// Install a plugin only into IDEs matching a glob, and nowhere else.
+    Only {
+        /// Plugin ID from its descriptor, e.g. com.falsepattern.zigbrains
+        id: String,
+        /// Glob over IDE directory name or product, e.g. "CLion*"
+        #[arg(long = "ide")]
+        ide: String,
+    },
+    /// Offer a plugin to matching IDEs even if jbsync judges it incompatible.
+    Allow {
+        /// Plugin ID from its descriptor.
+        id: String,
+        /// Glob over IDE directory name or product; every IDE by default.
+        #[arg(long = "ide", default_value = "*")]
+        ide: String,
+    },
+    /// Never offer a plugin to matching IDEs.
+    Deny {
+        /// Plugin ID from its descriptor.
+        id: String,
+        /// Glob over IDE directory name or product; every IDE by default.
+        #[arg(long = "ide", default_value = "*")]
+        ide: String,
+    },
 }
 
 pub fn run() -> anyhow::Result<()> {
@@ -183,7 +215,10 @@ pub fn run() -> anyhow::Result<()> {
             }
         }
         Command::Repo { action } => repo(cli.config_dir, action)?,
-        Command::Plugins => {
+        Command::Plugins {
+            action: Some(action),
+        } => plugin_rule(cli.config_dir, action)?,
+        Command::Plugins { action: None } => {
             let engine = Engine::open(cli.config_dir)?;
             let manifest = plugins::Manifest::load(&engine.store_root().join("plugins.json"))?;
             if manifest.plugins.is_empty() {
@@ -314,6 +349,50 @@ fn repo(config_dir: Option<PathBuf>, action: RepoAction) -> Result<()> {
             println!("Store is now local only.");
         }
     }
+    Ok(())
+}
+
+/// Writes one `[[plugins.rule]]` into the store's `sync.toml`, so scoping a
+/// plugin does not mean hand-editing TOML.
+fn plugin_rule(config_dir: Option<PathBuf>, action: PluginAction) -> Result<()> {
+    let engine = Engine::open(config_dir)?;
+    let path = engine.store_root().join("sync.toml");
+    let rule = match action {
+        PluginAction::Only { id, ide } => PluginRule {
+            id,
+            ide,
+            action: "only".to_string(),
+        },
+        PluginAction::Allow { id, ide } => PluginRule {
+            id,
+            ide,
+            action: "allow".to_string(),
+        },
+        PluginAction::Deny { id, ide } => PluginRule {
+            id,
+            ide,
+            action: "deny".to_string(),
+        },
+    };
+
+    match config::append_plugin_rule(&path, &rule)? {
+        config::RuleWrite::AlreadyPresent => {
+            println!(
+                "Already set: {} is {} for {}",
+                rule.id, rule.action, rule.ide
+            );
+            return Ok(());
+        }
+        config::RuleWrite::Added => {}
+    }
+
+    match rule.action.as_str() {
+        "only" => println!("{} will be installed only into {}.", rule.id, rule.ide),
+        "allow" => println!("{} is now allowed in {}.", rule.id, rule.ide),
+        _ => println!("{} will not be installed into {}.", rule.id, rule.ide),
+    }
+    println!("Written to {}", path.display());
+    println!("Run `jbsync sync` to commit it to the store.");
     Ok(())
 }
 

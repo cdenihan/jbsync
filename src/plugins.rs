@@ -392,14 +392,35 @@ pub fn compatibility(
     // An explicit rule always wins, so a user can override our reasoning.
     let mut manual: Option<Verdict> = None;
     for rule in &config.rule {
-        if glob_matches(&rule.id, &plugin.id) && targets_ide(&rule.ide, ide) {
-            let action = rule.action.to_ascii_lowercase();
-            if action == "allow" || action == "deny" {
+        if !glob_matches(&rule.id, &plugin.id) {
+            continue;
+        }
+        let hits_ide = targets_ide(&rule.ide, ide);
+        match rule.action.to_ascii_lowercase().as_str() {
+            // `only` is the one action that says something about the IDEs it
+            // does *not* name: confining a plugin to one product otherwise
+            // takes a blanket deny plus a narrower allow, and getting that
+            // pair in the wrong order silently does nothing.
+            "only" => {
+                manual = Some(if hits_ide {
+                    Verdict {
+                        compatible: true,
+                        reason: format!("only rule for {}", rule.ide),
+                    }
+                } else {
+                    Verdict {
+                        compatible: false,
+                        reason: format!("only for {}", rule.ide),
+                    }
+                });
+            }
+            action @ ("allow" | "deny") if hits_ide => {
                 manual = Some(Verdict {
                     compatible: action == "allow",
                     reason: format!("manual {action} rule"),
                 });
             }
+            _ => {}
         }
     }
 
@@ -766,6 +787,91 @@ mod tests {
         );
         assert!(verdict.compatible);
         assert_eq!(verdict.reason, "manual allow rule");
+    }
+
+    #[test]
+    fn an_only_rule_confines_a_plugin_to_one_product() {
+        let plugin = parse_descriptor(MODERN, "x").unwrap();
+        let config = PluginsConfig {
+            rule: vec![crate::config::PluginRule {
+                id: "com.example.tool".to_string(),
+                ide: "CLion*".to_string(),
+                action: "only".to_string(),
+            }],
+            ..PluginsConfig::default()
+        };
+
+        let clion = ide_with("252.1", "CLion", &["com.intellij.modules.python"]);
+        let named = compatibility(
+            &plugin,
+            &clion,
+            &capabilities(&clion, &BTreeMap::new(), &config),
+            &BTreeSet::new(),
+            &config,
+        );
+        assert!(named.compatible, "{}", named.reason);
+
+        // The point of `only`: it must also speak for the IDEs it never names.
+        let pycharm = ide_with("252.1", "PyCharm", &["com.intellij.modules.python"]);
+        let other = compatibility(
+            &plugin,
+            &pycharm,
+            &capabilities(&pycharm, &BTreeMap::new(), &config),
+            &BTreeSet::new(),
+            &config,
+        );
+        assert!(!other.compatible);
+        assert_eq!(other.reason, "only for CLion*");
+    }
+
+    #[test]
+    fn an_only_rule_beats_the_compatibility_check() {
+        // A CLion-only plugin that CLion would otherwise refuse: the rule is an
+        // override, exactly as `allow` is.
+        let plugin = parse_descriptor(MODERN, "x").unwrap();
+        let clion = ide_with("252.1", "CLion", &["com.intellij.modules.clion"]);
+        let config = PluginsConfig {
+            rule: vec![crate::config::PluginRule {
+                id: "com.example.*".to_string(),
+                ide: "CLion*".to_string(),
+                action: "only".to_string(),
+            }],
+            ..PluginsConfig::default()
+        };
+        let verdict = compatibility(
+            &plugin,
+            &clion,
+            &capabilities(&clion, &BTreeMap::new(), &config),
+            &BTreeSet::new(),
+            &config,
+        );
+        assert!(verdict.compatible, "{}", verdict.reason);
+    }
+
+    #[test]
+    fn an_only_rule_ignores_plugins_it_does_not_name() {
+        let plugin = parse_descriptor(MODERN, "x").unwrap();
+        let pycharm = ide_with("252.1", "PyCharm", &["com.intellij.modules.python"]);
+        let config = PluginsConfig {
+            rule: vec![crate::config::PluginRule {
+                id: "com.other.plugin".to_string(),
+                ide: "CLion*".to_string(),
+                action: "only".to_string(),
+            }],
+            ..PluginsConfig::default()
+        };
+        let verdict = compatibility(
+            &plugin,
+            &pycharm,
+            &capabilities(&pycharm, &BTreeMap::new(), &config),
+            &BTreeSet::new(),
+            &config,
+        );
+        assert!(
+            verdict.compatible,
+            "a rule about another plugin must not deny this one: {}",
+            verdict.reason
+        );
     }
 
     #[test]

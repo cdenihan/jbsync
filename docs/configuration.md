@@ -133,18 +133,71 @@ use_defaults = true
 ### `[[plugins.rule]]` — force a verdict
 
 Overrides jbsync's compatibility check for one plugin. Useful when a plugin's
-declared build range is stale but it works fine.
+declared build range is stale but it works fine, or when a plugin belongs in
+one product and nowhere else.
 
 ```toml
 [[plugins.rule]]
 id = "com.example.plugin"    # the plugin ID from its descriptor
 ide = "*"                    # glob over IDE directory name / product; default "*"
-action = "allow"             # "allow" or "deny"
+action = "allow"             # "allow", "deny", or "only"
+```
+
+| `action` | Effect on IDEs matching `ide` | Effect on every other IDE |
+| --- | --- | --- |
+| `allow` | install, whatever the compatibility check says | nothing — the rule is silent |
+| `deny` | never install | nothing — the rule is silent |
+| `only` | install, whatever the compatibility check says | never install |
+
+`only` is the one action that speaks for IDEs it does not name, which is what
+makes "this plugin belongs in CLion alone" a single rule:
+
+```toml
+# Zig development lives in CLion. Nothing else gets ZigBrains.
+[[plugins.rule]]
+id = "com.falsepattern.zigbrains"
+ide = "CLion*"
+action = "only"
+```
+
+Other IDEs then report the reason in `jbsync plugins` and in a sync:
+
+```
+WebStorm2026.2: skip com.falsepattern.zigbrains (only for CLion*)
+```
+
+Remember a plugin's **dependencies** need the same treatment, or they keep
+installing everywhere on their own. ZigBrains pulls in LSP4IJ, so both are
+confined together:
+
+```toml
+[[plugins.rule]]
+id = "com.redhat.devtools.lsp4ij"
+ide = "CLion*"
+action = "only"
+```
+
+Writing these by hand is optional — `jbsync plugins only <id> --ide "CLion*"`
+appends the block for you, leaving the rest of the file and its comments alone.
+See [Keep a plugin in one IDE only](recipes.md#keep-a-plugin-in-one-ide-only).
+
+**Precedence.** Rules are read top to bottom and the **last** one that matches
+wins, so put general rules first and narrow exceptions after them. This is why
+`only` is worth reaching for: the two-rule spelling of the same intent is a
+blanket `deny` followed by a narrower `allow`, and in the other order it
+silently does nothing.
+
+```toml
+# Equivalent to the single `only` rule above — and easy to get wrong.
+[[plugins.rule]]
+id = "com.falsepattern.zigbrains"
+ide = "*"
+action = "deny"
 
 [[plugins.rule]]
-id = "com.heavy.profiler"
+id = "com.falsepattern.zigbrains"
 ide = "CLion*"
-action = "deny"              # never offer this one to CLion
+action = "allow"
 ```
 
 ### `[[plugins.capability]]` — adjust what an IDE provides

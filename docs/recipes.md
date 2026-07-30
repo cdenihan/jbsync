@@ -85,6 +85,43 @@ ides = ["IntelliJIdea20??.*", "PyCharm20??.*"]
 Globs match directory names under the JetBrains root. Replacing the default
 `["*20??.*"]` with an explicit list is how you opt in rather than out.
 
+## Keep a plugin in one IDE only
+
+```console
+$ jbsync plugins only com.falsepattern.zigbrains --ide 'CLion*'
+```
+
+Writes one rule into the store's `sync.toml`, so it reaches your other machines
+too:
+
+```toml
+[[plugins.rule]]
+id = "com.falsepattern.zigbrains"
+ide = "CLion*"
+action = "only"
+```
+
+The plugin stays recorded in `plugins.json`, so a CLion elsewhere still gets it;
+every other product reports `skip … (only for CLion*)` instead of installing.
+
+Do the same for anything it **depends on**, or the dependency keeps installing
+everywhere by itself — ZigBrains pulls in LSP4IJ, so both need the rule:
+
+```console
+$ jbsync plugins only com.redhat.devtools.lsp4ij --ide 'CLion*'
+```
+
+`jbsync plugins allow` and `jbsync plugins deny` write the other two actions the
+same way, defaulting to `--ide '*'`. None of them install or remove anything;
+they change what the next sync will do.
+
+## Undo a plugin that installed everywhere
+
+There is no uninstall. The IDE launcher jbsync drives can install plugins but
+not remove them, so a plugin that spread before you scoped it has to be taken
+out in each IDE's **Settings → Plugins → Uninstall**. Write the `only` rule
+first and the next sync will not put it back.
+
 ## Publish without changing local IDEs
 
 ```console

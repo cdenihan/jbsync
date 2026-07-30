@@ -191,6 +191,12 @@ offered to CLion. `jbsync plugins` shows the manifest and the verdict per IDE;
 installation is opt-in via `jbsync sync --install-plugins` because it launches
 the IDE binary.
 
+To keep a plugin in one product, scope it with a single rule:
+
+```console
+$ jbsync plugins only com.falsepattern.zigbrains --ide 'CLion*'
+```
+
 ## Configuration
 
 Two files, deliberately separated by whether they should travel.
@@ -247,6 +253,8 @@ Every key, with defaults and worked examples, is in the
 | `jbsync ides` | List the IDEs jbsync can see |
 | `jbsync repo show\|set\|unset` | Inspect or change where the store lives |
 | `jbsync plugins` | Show the plugin manifest and per-IDE verdicts |
+| `jbsync plugins only <id> --ide <glob>` | Confine a plugin to matching IDEs |
+| `jbsync plugins allow\|deny <id>` | Force a verdict for a plugin |
 | `jbsync disable-builtin-sync` | Turn off JetBrains' bundled Backup and Sync |
 | `jbsync update` | Replace the running binary with the latest release |
 | `jbsync completions <shell>` | Print a shell completion script |
