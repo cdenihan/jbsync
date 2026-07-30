@@ -327,6 +327,11 @@ Compatibility is checked before anything is installed: build ranges (including
 `.*` wildcards), required modules against what each IDE provides, and
 `incompatible-with` declarations. A Python-only plugin is not offered to CLion.
 
+A plugin the product **bundles** counts as already there, even though it lives
+in the application directory rather than the config `plugins/` directory. One
+IDE shipping TOML support in the box and another carrying it as a Marketplace
+install is the normal case, and only the second needs anything done.
+
 `jbsync plugins` shows the manifest and the verdict per IDE. Installation is
 opt-in via `jbsync sync --install-plugins`, because it launches the IDE binary
 and that should not happen behind your back.
