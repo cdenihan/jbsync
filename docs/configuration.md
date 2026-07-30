@@ -126,8 +126,12 @@ enabled = true
 
 [xml]
 # Apply the built-in rules for what is not a user choice (registry keys the IDE
-# set for itself, untouched tutorial progress, one-shot migration flags, and the
-# dialog state JetBrains keeps beside the settings for new projects).
+# set for itself, untouched tutorial progress, one-shot migration flags).
+#
+# The rules that keep machine-local content out of the store — window geometry
+# and the like, beside the settings for new projects — apply either way. This
+# widens what counts as a choice; it does not start publishing another machine's
+# window positions.
 use_defaults = true
 ```
 

@@ -840,13 +840,12 @@ impl Engine {
                             // has this file and the merge saw nothing on this
                             // side to reconcile it against. There is still a
                             // real file here — one holding only content that
-                            // pruning removed — so graft every leaf rather than
-                            // skipping, which delivered nothing, or overwriting,
-                            // which would take that content with it.
+                            // pruning removed — so graft the donor's tree onto
+                            // it rather than skipping, which delivered nothing,
+                            // or overwriting, which would take that content
+                            // with it.
                             if change.path.is_empty() {
-                                for (address, value) in project::project(&donor) {
-                                    project::set_leaf(&mut target, &donor, &address, &value);
-                                }
+                                project::graft(&mut target, &donor);
                                 continue;
                             }
                             match &change.to {

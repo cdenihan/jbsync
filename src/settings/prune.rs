@@ -80,13 +80,25 @@ const BUILTINS: &[Builtin] = &[
         equals: "JAVA",
         reason: "per-installation language state",
     },
-    // `project.default.xml` is the template every new project starts from, so
-    // most of it is a genuine choice — but the platform stores dialog state in
-    // the same file. These four are the ones that appear there, identical
-    // across IntelliJ IDEA, PyCharm, CLion, RustRover and WebStorm. Each is
-    // dropped as a whole component: none of them has a leaf worth keeping, and
-    // matching the component is what makes the rule survive JetBrains adding
-    // another field to it.
+];
+
+/// Content that is machine-local rather than merely not-a-choice, which is why
+/// these run whatever `xml.use_defaults` says.
+///
+/// Turning that setting off widens what counts as a user choice — it keeps
+/// registry keys and tutorial progress. That is not a reason to start
+/// publishing another machine's window positions, and `project.default.xml` is
+/// only in the manifest at all because these rules can take this content out of
+/// it. Gating them on the same flag would mean a single unrelated preference
+/// silently turned the exception into a leak.
+///
+/// `project.default.xml` is the template every new project starts from, so most
+/// of it is a genuine choice — but the platform stores dialog state in the same
+/// file. These four are the ones that appear there, identical across IntelliJ
+/// IDEA, PyCharm, CLion, RustRover and WebStorm. Each is dropped as a whole
+/// component: none of them has a leaf worth keeping, and matching the component
+/// is what makes the rule survive JetBrains adding another field to it.
+const ALWAYS: &[Builtin] = &[
     Builtin {
         file: "options/project.default.xml",
         component: None,
@@ -197,24 +209,26 @@ pub fn prune_document(
 ) -> PruneOutcome {
     let mut removed = Vec::new();
 
-    if use_builtins {
-        for rule in BUILTINS
-            .iter()
-            .filter(|rule| file_matches(rule.file, relative))
-        {
-            apply(
-                root,
-                None,
-                "",
-                rule.component,
-                rule.element,
-                Some(rule.attribute),
-                None,
-                rule.equals,
-                rule.reason,
-                &mut removed,
-            );
-        }
+    // The machine-local rules are not optional; the rest answer "is this a user
+    // choice", which is the question `use_builtins` is about.
+    let gated = if use_builtins { BUILTINS } else { &[] };
+    for rule in ALWAYS
+        .iter()
+        .chain(gated)
+        .filter(|rule| file_matches(rule.file, relative))
+    {
+        apply(
+            root,
+            None,
+            "",
+            rule.component,
+            rule.element,
+            Some(rule.attribute),
+            None,
+            rule.equals,
+            rule.reason,
+            &mut removed,
+        );
     }
     for rule in rules
         .iter()
@@ -643,6 +657,46 @@ mod tests {
                </application>"#,
         );
         assert_eq!(root.children.len(), 1);
+    }
+
+    /// `xml.use_defaults = false` widens what counts as a user choice. It must
+    /// not also start publishing machine-local content: this file is only in
+    /// the manifest because these four rules can take that content out of it,
+    /// so one unrelated preference would otherwise turn the exception into a
+    /// leak on upgrade.
+    #[test]
+    fn dialog_state_goes_even_with_the_builtin_rules_turned_off() {
+        let mut root = parse(&default_project(
+            r##"<component name="AutoImportSettings">
+                   <option name="autoReloadType" value="SELECTIVE" />
+                 </component>
+                 <component name="WindowStateProjectService">
+                   <state x="356" y="76" key="#Plugins" />
+                 </component>
+                 <component name="PropertiesComponent">{"keyToString": {"a": "/Users/someone/x"}}</component>"##,
+        ))
+        .unwrap();
+        let outcome = prune_document("options/project.default.xml", &mut root, &[], false, None);
+
+        let serialized = crate::xml::dom::serialize(&root);
+        assert!(
+            !serialized.contains("WindowStateProjectService"),
+            "{serialized}"
+        );
+        assert!(!serialized.contains("/Users/someone"), "{serialized}");
+        assert!(serialized.contains("autoReloadType"), "{serialized}");
+        assert!(!outcome.is_empty);
+
+        // The rules that answer "is this a user choice" really are off, so the
+        // two categories have not merely been merged.
+        let mut registry = parse(
+            r#"<application><component name="Registry">
+                 <entry key="a" value="1" source="SYSTEM" />
+               </component></application>"#,
+        )
+        .unwrap();
+        prune_document("options/ide.general.xml", &mut registry, &[], false, None);
+        assert!(crate::xml::dom::serialize(&registry).contains("SYSTEM"));
     }
 
     #[test]

@@ -168,6 +168,35 @@ pub fn set_leaf(target: &mut Element, donor: &Element, path: &str, value: &str) 
     true
 }
 
+/// Copies everything in `donor` into `target`, creating what is missing and
+/// leaving anything `donor` does not mention alone.
+///
+/// This is the whole-file counterpart to [`set_leaf`], and it deliberately
+/// walks the tree rather than replaying [`project`]. Two things are lost in a
+/// flattened form. An element whose key attribute *is* the setting —
+/// `<global_color_scheme name="Islands Dark" />` — contributes no leaf at all,
+/// because the key is already spent addressing it, so replaying leaves would
+/// never create it. And addresses are ordered lexically, which puts `laf#10`
+/// before `laf#2`, so rebuilding a keyless list from them would number its
+/// entries in the wrong order. Walking the donor keeps both.
+pub fn graft(target: &mut Element, donor: &Element) {
+    for (attribute, value) in &donor.attributes {
+        target.attributes.insert(attribute.clone(), value.clone());
+    }
+    if donor.text.is_some() {
+        target.text.clone_from(&donor.text);
+    }
+    // Document order, so a keyless child lands at the index its address names:
+    // `laf#1` is only findable once `laf#0` is there.
+    for (index, address) in child_segments(donor) {
+        let child = &donor.children[index];
+        match find_child(target, &address) {
+            Some(existing) => graft(&mut target.children[existing], child),
+            None => target.children.push(child.clone()),
+        }
+    }
+}
+
 /// Removes the leaf at `path`, then drops any ancestor left with nothing to
 /// serialize.
 pub fn remove_leaf(target: &mut Element, path: &str) {
@@ -209,6 +238,8 @@ fn find_child(parent: &Element, wanted: &str) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Write as _;
+
     use super::{super::dom::parse, *};
 
     fn document() -> Element {
@@ -340,6 +371,72 @@ mod tests {
                 .any(|path| path.contains("GeneralSettings"))
         );
         assert!(flattened.keys().any(|path| path.contains("Registry")));
+    }
+
+    /// The failure a flattened replay would have: this element carries no leaf
+    /// at all, because its key attribute is the setting rather than an address.
+    #[test]
+    fn graft_creates_elements_that_project_to_nothing() {
+        let donor =
+            parse(r#"<application><global_color_scheme name="Islands Dark" /></application>"#)
+                .unwrap();
+        assert!(project(&donor).is_empty(), "the premise: nothing to replay");
+
+        let mut target = parse("<application />").unwrap();
+        graft(&mut target, &donor);
+        assert_eq!(target, donor);
+    }
+
+    /// Addresses sort lexically, so `laf#10` precedes `laf#2`. Rebuilding from
+    /// them would put the tenth entry second; walking the donor does not.
+    #[test]
+    fn graft_keeps_the_order_of_keyless_siblings() {
+        let mut body = String::new();
+        for index in 0..11 {
+            let _ = write!(body, r#"<laf themeId="t{index}" />"#);
+        }
+        let donor = parse(&format!("<application>{body}</application>")).unwrap();
+
+        let mut target = parse("<application />").unwrap();
+        graft(&mut target, &donor);
+
+        let themes: Vec<&str> = target
+            .children
+            .iter()
+            .filter_map(|child| child.attributes.get("themeId").map(String::as_str))
+            .collect();
+        assert_eq!(
+            themes,
+            [
+                "t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9", "t10"
+            ]
+        );
+    }
+
+    /// A graft delivers the donor without evicting what the target already had,
+    /// which is the whole reason it is not just an overwrite.
+    #[test]
+    fn graft_leaves_content_the_donor_does_not_mention() {
+        let donor = document();
+        let mut target =
+            parse(r#"<application><component name="Local"><option name="a" value="1" /></component></application>"#)
+                .unwrap();
+        graft(&mut target, &donor);
+
+        let flattened = project(&target);
+        assert_eq!(
+            flattened
+                .get("component[name=Local]/option[name=a]/@value")
+                .map(String::as_str),
+            Some("1"),
+            "the target's own content survives"
+        );
+        assert!(
+            flattened
+                .keys()
+                .any(|path| path.contains("GeneralSettings")),
+            "and the donor's arrives"
+        );
     }
 
     #[test]

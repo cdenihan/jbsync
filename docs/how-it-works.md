@@ -85,6 +85,11 @@ component JetBrains grows a new field for still goes wholesale. Should a future
 release add a fifth, an `[[xml.omit]]` block covers it without waiting for a
 jbsync release.
 
+Unlike the rest of the built-in rules, these four are not governed by
+`xml.use_defaults`. That setting widens what counts as a user choice; the file
+is in the allowlist *because* this content can be taken out of it, so letting an
+unrelated preference disable the removals would turn the exception into a leak.
+
 **What the last row costs.** `PropertiesComponent` is a single JSON document
 held in one XML text node, and everything here — pruning, merging, reporting,
 conflict resolution — addresses XML leaves. Dropping it therefore drops a few
