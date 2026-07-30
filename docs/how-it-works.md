@@ -332,9 +332,14 @@ in the application directory rather than the config `plugins/` directory. One
 IDE shipping TOML support in the box and another carrying it as a Marketplace
 install is the normal case, and only the second needs anything done.
 
-`jbsync plugins` shows the manifest and the verdict per IDE. Installation is
-opt-in via `jbsync sync --install-plugins`, because it launches the IDE binary
-and that should not happen behind your back.
+`jbsync plugins` shows the manifest and the verdict per IDE. A sync installs
+what is missing; `jbsync sync --no-install-plugins` reduces that to a report.
+
+Installing launches the IDE binary, so the first sync after a new plugin
+appears is slower than usual and prints whatever that launcher decides to say.
+The way to stop a plugin reaching a product is a rule, not the flag — see
+[`[[plugins.rule]]`](configuration.md#pluginsrule--force-a-verdict) — because a
+rule is a lasting decision and the flag only skips one run.
 
 It also reports plugins that are **already installed but cannot load**, which is
 a different question from what to install next. A plugin put there by hand — or

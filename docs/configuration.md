@@ -120,7 +120,7 @@ explicit_include = []                         # e.g. ["*.vmoptions"]
 # Record which third-party plugins you have, and report what is missing where.
 enabled = true
 
-# The IDE launcher used by `jbsync sync --install-plugins`. jbsync reads this
+# The IDE launcher a sync uses to install plugins. jbsync reads this
 # from each IDE's own metadata; set it only when that is missing or wrong.
 # launchers = { IntelliJIdea = "idea", PyCharm = "pycharm" }
 

@@ -59,7 +59,7 @@ pub struct SyncOptions {
     /// Skip writing merged settings back into the IDEs.
     pub collect_only: bool,
     /// Actually install missing plugins from Marketplace, rather than only
-    /// reporting them. Off by default: it launches the IDE binary.
+    /// reporting them. On by default; `--no-install-plugins` turns it off.
     pub install_plugins: bool,
 }
 
@@ -71,9 +71,17 @@ impl Default for SyncOptions {
             message: "Sync JetBrains settings".to_string(),
             only: Vec::new(),
             collect_only: false,
-            install_plugins: false,
+            install_plugins: true,
         }
     }
+}
+
+/// What reconciling plugins produced: lines to show, and whether any of it
+/// actually landed in the store.
+#[derive(Debug, Default)]
+struct PluginOutcome {
+    lines: Vec<String>,
+    manifest_changed: bool,
 }
 
 pub struct Engine {
@@ -277,7 +285,9 @@ impl Engine {
             }
         }
         progress.step("checking plugins...");
-        report.plugins = self.reconcile_plugins(options)?;
+        let plugins = self.reconcile_plugins(options)?;
+        report.plugins = plugins.lines;
+        report.manifest_changed = plugins.manifest_changed;
 
         if !options.dry_run {
             // Best-effort: failing to tidy old backups must never fail a sync
@@ -285,7 +295,7 @@ impl Engine {
             let _ = prune_backups(&self.paths.backups_dir(), BACKUP_RUNS_KEPT);
         }
 
-        if !options.dry_run && !report.is_empty() {
+        if !options.dry_run && report.changes_the_store() {
             progress.step("committing...");
             let published = self.backend.publish(&options.message)?;
             report.published = match published {
@@ -308,16 +318,21 @@ impl Engine {
     }
 
     /// Records installed plugins in the store and reports which ones are
-    /// missing elsewhere. Installation itself is opt-in, because it launches
-    /// the IDE binary and downloads from Marketplace.
-    fn reconcile_plugins(&self, options: &SyncOptions) -> Result<Vec<String>> {
+    /// missing elsewhere, installing them unless `--no-install-plugins` says
+    /// otherwise. Installing launches the IDE binary and downloads from
+    /// Marketplace, so a sync can be slow the first time a plugin appears.
+    fn reconcile_plugins(&self, options: &SyncOptions) -> Result<PluginOutcome> {
         if !self.sync_config.plugins.enabled {
-            return Ok(Vec::new());
+            return Ok(PluginOutcome::default());
         }
         let selected = self.selected_ides(&options.only);
         let manifest_path = self.store_root().join("plugins.json");
         let stored = plugins::Manifest::load(&manifest_path)?;
         let observed = plugins::collect(&selected, &self.sync_config);
+        // Kept to answer "did this run change the manifest", which decides
+        // whether there is anything to commit. The merge below consumes the
+        // original.
+        let before = stored.plugins.clone();
 
         // Union: a plugin another machine published stays in the manifest even
         // though it is not installed here.
@@ -348,7 +363,10 @@ impl Engine {
             version: 1,
             plugins: merged.into_values().collect(),
         };
-        if !options.dry_run {
+        // Rewriting an identical manifest would churn the file's mtime on
+        // every run for nothing.
+        let manifest_changed = manifest.plugins != before;
+        if !options.dry_run && manifest_changed {
             manifest.save(&manifest_path)?;
         }
 
@@ -372,7 +390,10 @@ impl Engine {
                 ));
             }
         }
-        Ok(lines)
+        Ok(PluginOutcome {
+            lines,
+            manifest_changed,
+        })
     }
 
     /// Turns off JetBrains' bundled Backup and Sync.

@@ -188,8 +188,8 @@ Windows — is unsound.
 Compatibility is checked before anything is installed: build ranges, required
 modules, and `incompatible-with` declarations. A Python-only plugin is not
 offered to CLion. `jbsync plugins` shows the manifest and the verdict per IDE;
-installation is opt-in via `jbsync sync --install-plugins` because it launches
-the IDE binary.
+a sync installs what is missing, and `--no-install-plugins` reduces that to a
+report.
 
 To keep a plugin in one product, scope it with a single rule:
 
@@ -260,7 +260,7 @@ Every key, with defaults and worked examples, is in the
 | `jbsync completions <shell>` | Print a shell completion script |
 
 Useful flags: `--dry-run`, `--verbose`, `--prefer local|remote|neither`,
-`--ide <selector>` (repeatable), `--collect-only`, `--install-plugins`.
+`--ide <selector>` (repeatable), `--collect-only`, `--no-install-plugins`.
 
 `jbsync update` prints a sentence; add `--json` for a machine-readable summary.
 

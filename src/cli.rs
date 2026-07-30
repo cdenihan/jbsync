@@ -83,8 +83,11 @@ enum Command {
         /// Gather settings into the store without writing back to the IDEs.
         #[arg(long)]
         collect_only: bool,
-        /// Install missing plugins from Marketplace via the IDE launcher.
+        /// Report missing plugins instead of installing them.
         #[arg(long)]
+        no_install_plugins: bool,
+        /// Accepted and ignored: installing is the default now.
+        #[arg(long, hide = true)]
         install_plugins: bool,
         /// Commit message for the git backend.
         #[arg(long, short, default_value = "Sync JetBrains settings")]
@@ -182,7 +185,8 @@ pub fn run() -> anyhow::Result<()> {
             prefer,
             ides,
             collect_only,
-            install_plugins,
+            no_install_plugins,
+            install_plugins: _,
             message,
         } => {
             let mut engine = Engine::open(cli.config_dir)?;
@@ -192,7 +196,7 @@ pub fn run() -> anyhow::Result<()> {
                 message,
                 only: ides,
                 collect_only,
-                install_plugins,
+                install_plugins: !no_install_plugins,
             };
             let report = engine.sync_reporting(&options, &mut Progress::new())?;
             print!("{}", render_with(&report, cli.verbose, Style::auto()));
@@ -403,6 +407,29 @@ mod tests {
     #[test]
     fn command_tree_is_valid() {
         Cli::command().debug_assert();
+    }
+
+    /// Reads the effective install decision the way `run` does.
+    fn installs(argv: &[&str]) -> bool {
+        match Cli::parse_from(argv).command {
+            Command::Sync {
+                no_install_plugins, ..
+            } => !no_install_plugins,
+            other => panic!("expected a sync command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn plugin_installation_is_opt_out() {
+        assert!(installs(&["jbsync", "sync"]), "installing is the default");
+        assert!(!installs(&["jbsync", "sync", "--no-install-plugins"]));
+    }
+
+    #[test]
+    fn the_old_install_plugins_flag_is_still_accepted() {
+        // It was the way to ask for this behaviour, and it now describes the
+        // default. Scripts carrying it must not start failing.
+        assert!(installs(&["jbsync", "sync", "--install-plugins"]));
     }
 
     #[test]

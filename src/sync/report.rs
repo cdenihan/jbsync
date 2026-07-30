@@ -67,6 +67,10 @@ pub struct SyncReport {
     pub ides: Vec<IdeReport>,
     pub published: Option<String>,
     pub plugins: Vec<String>,
+    /// Whether the plugin manifest in the store actually changed. Most of
+    /// `plugins` is commentary — a `skip` line explains a decision rather than
+    /// recording one — so the lines cannot stand in for this.
+    pub manifest_changed: bool,
     /// Things that went wrong but did not stop the run.
     pub warnings: Vec<String>,
 }
@@ -90,6 +94,18 @@ impl SyncReport {
             // An IDE left out of the run is news, even when nothing else moved.
             && self.ides.iter().all(|ide| ide.skipped.is_none())
             && self.plugins.is_empty()
+    }
+
+    /// Whether anything was written that the store needs to record.
+    ///
+    /// Deliberately narrower than `!is_empty()`, which asks whether there is
+    /// anything worth *printing*. A run whose only news is "skip this plugin,
+    /// a rule says so" has plenty to say and nothing to commit, and announcing
+    /// a commit there is a lie.
+    pub fn changes_the_store(&self) -> bool {
+        self.manifest_changed
+            || self.from_remote.iter().any(|file| !file.is_empty())
+            || self.ides.iter().any(|ide| !ide.is_empty())
     }
 
     /// Whether there is anything to print at the requested detail level.
@@ -521,6 +537,35 @@ mod tests {
         };
         let rendered = render(&report, false);
         assert!(rendered.contains("Everything is already in sync."));
+    }
+
+    #[test]
+    fn advisory_plugin_lines_are_not_a_reason_to_commit() {
+        // The everyday case for anyone with a plugin rule: the run has
+        // something to say and nothing to write.
+        let report = SyncReport {
+            machine: "mac".to_string(),
+            plugins: vec![
+                "WebStorm2026.2: skip com.falsepattern.zigbrains (only for CLion*)".to_string(),
+            ],
+            ..SyncReport::default()
+        };
+        assert!(!report.is_empty(), "the skip line is still worth printing");
+        assert!(
+            !report.changes_the_store(),
+            "a skip line records no change, so there is nothing to commit"
+        );
+    }
+
+    #[test]
+    fn a_changed_manifest_is_a_reason_to_commit() {
+        let report = SyncReport {
+            machine: "mac".to_string(),
+            plugins: vec!["+ com.example.tool (1.0.0)".to_string()],
+            manifest_changed: true,
+            ..SyncReport::default()
+        };
+        assert!(report.changes_the_store());
     }
 
     #[test]
