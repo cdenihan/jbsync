@@ -585,7 +585,11 @@ pub fn plan_installs(
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default();
         for plugin in &manifest.plugins {
-            if present.contains_key(&plugin.id) {
+            // `present` only covers the config `plugins/` directory, so a
+            // bundled plugin looks missing there. `capable` includes the
+            // product's bundled ids, and installing over one is a no-op the
+            // launcher rejects with "already installed" on every run.
+            if present.contains_key(&plugin.id) || capable.contains(&plugin.id) {
                 continue;
             }
             let verdict = compatibility(plugin, ide, &capable, &managed, &config.plugins);
@@ -761,6 +765,43 @@ mod tests {
         );
         assert!(!verdict.compatible);
         assert!(verdict.reason.contains("incompatibility"));
+    }
+
+    #[test]
+    fn a_bundled_plugin_is_never_planned_for_installation() {
+        // A bundled plugin lives in the app bundle, not the config `plugins/`
+        // directory, so it looks missing to `installed`. Planning it anyway
+        // makes every sync launch the IDE to be told "already installed".
+        let directory = tempfile::tempdir().unwrap();
+        let mut pycharm = ide_with("252.1", "PyCharm", &["com.intellij.modules.python"]);
+        pycharm.path = directory.path().join("PyCharm2026.2");
+        pycharm.metadata.as_mut().unwrap().bundled_plugins = vec!["com.example.tool".to_string()];
+
+        let manifest = Manifest {
+            version: 1,
+            plugins: vec![parse_descriptor(MODERN, "x").unwrap()],
+        };
+        let actions = plan_installs(&[&pycharm], &manifest, &SyncConfig::default());
+        assert!(
+            actions.is_empty(),
+            "bundled plugin should need no install: {actions:?}"
+        );
+    }
+
+    #[test]
+    fn a_genuinely_absent_plugin_is_still_planned() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut pycharm = ide_with("252.1", "PyCharm", &["com.intellij.modules.python"]);
+        pycharm.path = directory.path().join("PyCharm2026.2");
+
+        let manifest = Manifest {
+            version: 1,
+            plugins: vec![parse_descriptor(MODERN, "x").unwrap()],
+        };
+        let actions = plan_installs(&[&pycharm], &manifest, &SyncConfig::default());
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].plugin, "com.example.tool");
+        assert!(actions[0].install, "{}", actions[0].reason);
     }
 
     #[test]
