@@ -574,7 +574,15 @@ impl Engine {
             }
             let discovered = roamable::discover(ide, &self.sync_config, &manifest)?;
             let mut relatives: BTreeSet<String> = discovered.keys().cloned().collect();
-            relatives.extend(staging.files_under(&self.store_root().join(SHARED)));
+            // Everything the store holds is a candidate too, so an IDE adopts
+            // files it does not have yet — but this machine's exclusions apply
+            // to those as much as to its own, or excluding a file would work
+            // only until another machine published it.
+            for stored in staging.files_under(&self.store_root().join(SHARED)) {
+                if !roamable::is_excluded(&stored, ide, &self.sync_config)? {
+                    relatives.insert(stored);
+                }
+            }
 
             let product_defaults = self.defaults_for(ide, staging)?;
             let target = FileTarget {
@@ -726,19 +734,28 @@ impl Engine {
             self.store_view(relative, bytes, defaults)
         });
 
-        // The file is present but holds nothing worth sharing — every setting in
-        // it was pruned as a default. That is "no opinion", not "deleted", and
-        // conflating the two makes two IDEs fight: one keeps contributing the
-        // file and the other keeps withdrawing it. Contribute nothing and leave
-        // both sides alone.
-        if raw.is_some() && local_view.is_none() {
-            return Ok(None);
-        }
-
         let store_file = self.shared_path(relative);
         let store = staging.read(&store_file);
         let base_file = self.base_path(ide, relative);
         let base = staging.read(&base_file);
+
+        // The file is present but holds nothing worth sharing — every setting in
+        // it was pruned as a default. That is "no opinion", not "deleted", and
+        // conflating the two makes two IDEs fight: one keeps contributing the
+        // file and the other keeps withdrawing it.
+        //
+        // Standing in the base says exactly "no opinion": this IDE withdraws
+        // nothing, and still adopts whatever the store has. Skipping the file
+        // outright would say it twice over, because an IDE whose copy is all
+        // residue could then never *receive* either. That is the common case
+        // for `project.default.xml` — plenty of IDEs have dialog geometry in
+        // theirs and nothing else — and it is exactly the machine that most
+        // needs the settings for new projects to arrive.
+        let local_view = if raw.is_some() && local_view.is_none() {
+            base.clone()
+        } else {
+            local_view
+        };
 
         // No special case for first contact. With no base, any setting the IDE
         // does not define is taken from the store, so a newly installed IDE
@@ -819,7 +836,17 @@ impl Engine {
                 match (dom::parse(raw_text), dom::parse(merged_text)) {
                     (Ok(mut target), Ok(donor)) => {
                         for change in &merged.incoming {
+                            // A whole-file change carries no address: the store
+                            // has this file and the merge saw nothing on this
+                            // side to reconcile it against. There is still a
+                            // real file here — one holding only content that
+                            // pruning removed — so graft every leaf rather than
+                            // skipping, which delivered nothing, or overwriting,
+                            // which would take that content with it.
                             if change.path.is_empty() {
+                                for (address, value) in project::project(&donor) {
+                                    project::set_leaf(&mut target, &donor, &address, &value);
+                                }
                                 continue;
                             }
                             match &change.to {

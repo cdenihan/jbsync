@@ -21,6 +21,10 @@ pub type Projection = BTreeMap<String, String>;
 
 const TEXT_LEAF: &str = "#text";
 
+/// What JetBrains wraps *Settings for New Projects* in, inside
+/// `options/project.default.xml`.
+const DEFAULT_PROJECT_PREFIX: &str = "component[name=ProjectManager]/defaultProject#0/";
+
 /// The address of `element` relative to its parent. `same_tag_index` is the
 /// element's position among siblings that share its tag name.
 fn segment(element: &Element, same_tag_index: usize) -> String {
@@ -86,7 +90,13 @@ fn collect(element: &Element, prefix: &str, output: &mut Projection) {
 /// `component[name=Editor]/option[name=Font]/map#0/entry[key=size]/@value`
 /// becomes `Editor/Font/size`.
 pub fn sugar(path: &str) -> String {
-    let mut parts: Vec<String> = Vec::new();
+    // Every setting in `project.default.xml` carries the same two segments in
+    // front of it. Naming the wrapper once reads better in a report than
+    // repeating `ProjectManager/defaultProject` on every line.
+    let (path, mut parts) = match path.strip_prefix(DEFAULT_PROJECT_PREFIX) {
+        Some(rest) => (rest, vec!["New Projects".to_string()]),
+        None => (path, Vec::new()),
+    };
     for raw in path.split('/') {
         if matches!(raw, "map#0" | "list#0" | "set#0" | "value#0") {
             continue;
@@ -267,6 +277,14 @@ mod tests {
         assert_eq!(
             sugar("component[name=LafManager]/laf#1/@themeId"),
             "LafManager/laf#1/themeId"
+        );
+        // Everything in project.default.xml sits under the same two segments,
+        // which name the *place* rather than the setting.
+        assert_eq!(
+            sugar(
+                "component[name=ProjectManager]/defaultProject#0/component[name=TypeScriptCompiler]/option[name=memoryAutoIncrease]/@value"
+            ),
+            "New Projects/TypeScriptCompiler/memoryAutoIncrease"
         );
     }
 

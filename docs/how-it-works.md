@@ -52,9 +52,54 @@ the others sync.
 Every entry in that built-in list was checked against real trees. A file that
 exists in an IDE's `options/` but never appears in that same IDE's
 `settingsSync/` is one the platform declines to roam, and does not belong there
-— that test removed `project.default.xml`, `find.xml`, `advancedSettings.xml`,
-`console-font.xml`, `terminal-font.xml` and `textmate.xml`, each confirmed
-across four products.
+— that test removed `find.xml`, `advancedSettings.xml`, `console-font.xml`,
+`terminal-font.xml` and `textmate.xml`, each confirmed across four products.
+
+### Settings for new projects
+
+`options/project.default.xml` is the one file jbsync syncs that the platform
+does not, and the exception is deliberate.
+
+It holds **Settings for New Projects** — the template every project you create
+starts from, reached through *File → New Projects Setup*. Those are choices in
+exactly the sense the rest of the allowlist is about. Anything you can set for
+new projects rides along: format-on-save, VCS commit options, and the
+project-scoped language settings that only exist there, such as WebStorm's
+TypeScript language service memory limit.
+
+The platform skips the file because the same `<defaultProject>` element also
+holds dialog geometry and a JSON blob of UI state. That is a fair reason to skip
+a *file*, and no reason to skip the settings in it — jbsync prunes per
+component, so it does not have to make the same trade:
+
+| Dropped | Why |
+| --- | --- |
+| `WindowStateProjectService` | Dialog geometry, in this machine's screen coordinates |
+| `masterDetails` | Splitter positions in the settings dialog |
+| `ProjectInspectionProfilesVisibleTreeState` | Which inspection tree nodes were left expanded |
+| `PropertiesComponent` | One JSON blob of UI state and machine-local paths — unmergeable for the same reason as `llm.*.xml` |
+
+Those four are what the file contains across IntelliJ IDEA, PyCharm, CLion,
+RustRover and WebStorm. Each is matched by component rather than by field, so a
+component JetBrains grows a new field for still goes wholesale. Should a future
+release add a fifth, an `[[xml.omit]]` block covers it without waiting for a
+jbsync release.
+
+**What the last row costs.** `PropertiesComponent` is a single JSON document
+held in one XML text node, and everything here — pruning, merging, reporting,
+conflict resolution — addresses XML leaves. Dropping it therefore drops a few
+genuine choices along with the noise, of which `rearrange.code.on.save` is the
+one worth knowing: the third checkbox in *Actions on Save*, whose two siblings
+do sync. Filtering by key would still leave one unmergeable leaf, and would have
+to choose between leaking the absolute paths some of those keys hold and
+silently dropping keys JetBrains adds later. Per-key handling is a change of its
+own, not a line in this table.
+
+Two things this is **not**. It is not a project sync: settings inside a
+particular project live in that project's `.idea/` directory, they travel with
+the project's own repository, and jbsync never reads them. And, as everywhere
+else, pruning filters what reaches the store rather than editing your files —
+your own window positions stay exactly where they were.
 
 ### IDEs that have never been launched
 
@@ -106,6 +151,7 @@ rather than by code:
 | A map serialized whole, including untouched entries | tutorial progress where every lesson is `NOT_PASSED` |
 | Values the IDE set for itself, not for you | registry entries with `source="SYSTEM"` or `"MANAGER"`, one-shot `MIGRATE_OLD_SETTINGS` flags |
 | Components persisting only a schema version | `<component name="X" version="1"/>` |
+| Dialog state kept in the same file as settings | window geometry and splitter positions in `project.default.xml` |
 
 ### Learning a product's defaults
 

@@ -38,18 +38,28 @@ pub const DELETED_TOMBSTONE: &str = "DELETED";
 /// Fallback allowlist, used only when no installed IDE has a `settingsSync`
 /// tree to learn from.
 ///
-/// This mirrors what the platform actually roams. It is deliberately *not*
-/// `options/*.xml`: JetBrains excludes plenty of files in that directory —
-/// `other.xml` holds per-machine UI state, `llm.*.xml` holds opaque JSON blobs
-/// — and syncing them produces noise and unresolvable conflicts.
+/// This mirrors what the platform actually roams, save for the one documented
+/// exception below. It is deliberately *not* `options/*.xml`: JetBrains
+/// excludes plenty of files in that directory — `other.xml` holds per-machine
+/// UI state, `llm.*.xml` holds opaque JSON blobs — and syncing them produces
+/// noise and unresolvable conflicts.
 ///
 /// Every entry here has been checked against real `settingsSync` trees: a file
 /// that exists in an IDE's `options/` but never appears in that IDE's
 /// `settingsSync/` is one the platform declines to roam, and does not belong
-/// here. `project.default.xml` (nested per-project components and a JSON blob
-/// of machine-local paths), `find.xml` (search history), `advancedSettings.xml`,
+/// here. `find.xml` (search history), `advancedSettings.xml`,
 /// `console-font.xml`, `terminal-font.xml` and `textmate.xml` all failed that
 /// check across four products and were removed.
+///
+/// `project.default.xml` is the one deliberate exception, and the reasoning is
+/// worth stating because it breaks the rule above. The platform declines to
+/// roam it, but not because it holds nothing worth roaming: it holds *Settings
+/// for New Projects*, the template every project you create starts from, and
+/// those are choices in exactly the sense the rest of this list is about. What
+/// it also holds is dialog geometry and an opaque JSON blob, which is reason
+/// enough for the platform to skip the file wholesale. jbsync does not have to
+/// make that trade, because it prunes per component rather than per file — see
+/// the `project.default.xml` rules in `settings::prune`.
 const BUILTIN_MANIFEST: &[&str] = &[
     "codestyles/**",
     "colors/**",
@@ -78,6 +88,7 @@ const BUILTIN_MANIFEST: &[&str] = &[
     "options/ide.general.xml",
     "options/IntelliLang.xml",
     "options/laf.xml",
+    "options/project.default.xml",
     "options/sshConfigs.xml",
     "options/terminal.xml",
     "options/ui.lnf.xml",
@@ -284,21 +295,54 @@ pub fn observed_manifest(ides: &[&Ide]) -> Vec<String> {
 ///
 /// `manifest` comes from [`learned_manifest`]; passing an empty slice falls
 /// back to the built-in list.
-pub fn discover(
-    ide: &Ide,
-    config: &SyncConfig,
-    manifest: &[String],
-) -> Result<BTreeMap<String, PathBuf>> {
-    let excludes = {
+/// The configured include/exclude decision, built once from `sync.toml` and the
+/// per-machine override folded into it.
+struct Filter {
+    excludes: globset::GlobSet,
+    explicit: globset::GlobSet,
+}
+
+impl Filter {
+    fn new(config: &SyncConfig) -> Result<Self> {
         let mut patterns: Vec<String> = if config.jetbrains.use_default_excludes {
             EXCLUDES.iter().map(|value| (*value).to_string()).collect()
         } else {
             Vec::new()
         };
         patterns.extend(config.jetbrains.exclude.clone());
-        glob_set(&patterns)?
-    };
-    let explicit = glob_set(&config.jetbrains.explicit_include)?;
+        Ok(Self {
+            excludes: glob_set(&patterns)?,
+            explicit: glob_set(&config.jetbrains.explicit_include)?,
+        })
+    }
+
+    /// True when configuration says this IDE-relative path must not sync.
+    /// `explicit_include` wins, which is what makes it an escape hatch.
+    fn rejects(&self, relative: &str) -> bool {
+        !self.explicit.is_match(relative) && self.excludes.is_match(relative)
+    }
+}
+
+/// Whether a file already in the store must be kept away from this IDE.
+///
+/// Discovery asks the same question on the way *out* of an IDE, and it has to
+/// be asked again on the way *in*. The store contributes its own list of paths
+/// to reconcile, so a file another machine published would otherwise be merged
+/// into — and created inside — an IDE whose configuration excluded it, and the
+/// exclusion would appear to work only until somebody else published the file.
+///
+/// The manifest deliberately does not apply here: a file being in the store is
+/// itself the evidence that it roams.
+pub fn is_excluded(relative: &str, ide: &Ide, config: &SyncConfig) -> Result<bool> {
+    Ok(Filter::new(config)?.rejects(&target_relative_path(relative, ide, config)))
+}
+
+pub fn discover(
+    ide: &Ide,
+    config: &SyncConfig,
+    manifest: &[String],
+) -> Result<BTreeMap<String, PathBuf>> {
+    let filter = Filter::new(config)?;
 
     let mut patterns: Vec<String> = if manifest.is_empty() {
         BUILTIN_MANIFEST
@@ -321,8 +365,8 @@ pub fn discover(
         if !absolute.is_file() {
             continue;
         }
-        let explicitly_included = explicit.is_match(&relative);
-        if !explicitly_included && (excludes.is_match(&relative) || !manifest.is_match(&relative)) {
+        let explicitly_included = filter.explicit.is_match(&relative);
+        if filter.rejects(&relative) || !(explicitly_included || manifest.is_match(&relative)) {
             continue;
         }
         selected.insert(canonical_relative_path(&relative, ide, config), absolute);
@@ -430,6 +474,27 @@ mod tests {
         );
         assert!(!found.keys().any(|key| key.starts_with("plugins/")));
         assert!(!found.contains_key("idea.key"), "credentials never sync");
+    }
+
+    /// The platform does not roam this file, so no `settingsSync` tree will
+    /// ever contribute it and the built-in floor is the only thing that can.
+    /// Losing this entry silently stops *Settings for New Projects* syncing.
+    #[test]
+    fn settings_for_new_projects_are_in_the_builtin_floor() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        std::fs::create_dir_all(root.join("options")).unwrap();
+        std::fs::write(root.join("options/project.default.xml"), "<application />").unwrap();
+
+        let ide = ide_at(root, "WebStorm", "webstorm.vmoptions");
+        // Not just present in the list: still selected once an IDE with a
+        // narrower learned tree has had its say.
+        let manifest = learned_manifest(&[&ide], &["options/laf.xml".to_string()]);
+        assert!(
+            discover(&ide, &SyncConfig::default(), &manifest)
+                .unwrap()
+                .contains_key("options/project.default.xml")
+        );
     }
 
     #[test]

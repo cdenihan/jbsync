@@ -115,14 +115,16 @@ equals the state its default constructor produces, nothing is written to the XML
 at all. A live `options/*.xml` is therefore close to a diff against defaults
 before `jbsync` sees it.
 
-What is left is residue of three kinds, and each is handled by a declarative
+What is left is residue of four kinds, and each is handled by a declarative
 rule rather than by code:
 
 - components that serialize a whole map including untouched entries — tutorial
   progress where every lesson is `NOT_PASSED`, inlay-hint tables;
 - values the IDE set for itself rather than for you — registry keys carrying
   `source="SYSTEM"` or `"MANAGER"`, one-shot migration flags;
-- components that persist only a schema version and no settings.
+- components that persist only a schema version and no settings;
+- dialog state the platform files beside real settings — window geometry and
+  splitter positions in `project.default.xml`.
 
 Better still, jbsync *learns* the defaults. An IDE that has been installed but
 never opened contains nothing but its product's factory settings, so jbsync

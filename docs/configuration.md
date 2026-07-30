@@ -126,7 +126,8 @@ enabled = true
 
 [xml]
 # Apply the built-in rules for what is not a user choice (registry keys the IDE
-# set for itself, untouched tutorial progress, one-shot migration flags).
+# set for itself, untouched tutorial progress, one-shot migration flags, and the
+# dialog state JetBrains keeps beside the settings for new projects).
 use_defaults = true
 ```
 
@@ -237,6 +238,14 @@ component = "Registry"
 element = "entry"                    # default is "option"
 attribute = "source"
 equals = "SYSTEM"
+
+# A whole component, wherever it sits in the file. Use this when nothing inside
+# it is worth sharing, so the rule keeps working as JetBrains adds fields to it.
+[[xml.omit]]
+file = "options/project.default.xml"
+element = "component"
+attribute = "name"
+equals = "WindowStateProjectService"
 ```
 
 Fields:
