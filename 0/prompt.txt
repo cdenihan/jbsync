@@ -1,0 +1,41 @@
+Is this a healthy output? jbsync sync --install-plugins
+checking plugins...            plugin repositories: [null]
+looking up plugins: [org.toml.lang]
+already installed: org.toml.lang
+plugin repositories: [null]
+looking up plugins: [org.toml.lang]
+already installed: org.toml.lang
+Installation home directory: file:////Users/cdenihan/Applications/CLion.app/Contents
+System directory: file:////Users/cdenihan/Library/Caches/JetBrains/CLion2026.2
+Config directory: file:////Users/cdenihan/Library/Application Support/JetBrains/CLion2026.2
+Log directory: file:////Users/cdenihan/Library/Logs/JetBrains/CLion2026.2
+Debug | ByteBufferAsyncProcessor  | 31:DefaultDispatcher-worker-12 | PAUSE ('Socket not connected') :: {id = FrontendToBackend/Sender, state = 'Initialized'} 
+Debug | Server                    | 67:FrontendToBackend | FrontendToBackend: listening /127.0.0.1:54762 
+plugin repositories: [null]
+looking up plugins: [org.toml.lang]
+already installed: org.toml.lang
+plugin repositories: [null]
+looking up plugins: [org.toml.lang]
+already installed: org.toml.lang
+mac  ·  git@github.com:cdenihan/jbsync-data.git on main
+
+WebStorm2026.2  (WebStorm)
+  no changes
+
+IntelliJIdea2026.2  (IntelliJ IDEA)
+  no changes
+
+RustRover2026.2  (RustRover)
+  no changes
+
+CLion2026.2  (CLion)
+  no changes
+
+PyCharm2026.2  (PyCharm)
+  no changes
+
+Plugins
+  IntelliJIdea2026.2: install org.toml.lang
+  RustRover2026.2: install org.toml.lang
+  CLion2026.2: install org.toml.lang
+  PyCharm2026.2: install org.toml.lang
