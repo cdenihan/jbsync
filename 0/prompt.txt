@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>bec63kxxf</task-id>
+<tool-use-id>toolu_01AoHVRRUEEjmXfdc3ZWCLCL</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-cdenihan-Developer-cdenihan-jbsync/888a6bae-9bf8-4e00-8828-af65586e510d/tasks/bec63kxxf.output</output-file>
+<status>completed</status>
+<summary>Background command "Wait for CI and Release to finish" completed (exit code 0)</summary>
+</task-notification>
