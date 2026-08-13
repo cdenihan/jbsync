@@ -1,0 +1,1 @@
+Please flip the project so you can run CI and then private it again. In the mean time I will set the default for new projects so we can test it
