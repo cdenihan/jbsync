@@ -1,0 +1,1 @@
+All of the CI on the repo is failing and it looks like a bug upstream maybe? if so please fix it. The upstream repo is located in ~/Developer/cdenihan/ when you patch it also patch ~/Developer/cdenihan/XFER and ~/Developer/Wombat-CC/Wombat-CC
