@@ -1,0 +1,61 @@
+So I have a question. I just installed ZigBrains plugin in CLion for Zig development. I only need that plugin in CLion. Is there a way in a config file (I'm forgetting if there is a toml config file) that we can set it to only sync that plugin to CLion. I just ran this command and it did this, so I need to undo it. jbsync sync --install-plugins
+checking plugins...            plugin repositories: [null]
+looking up plugins: [com.falsepattern.zigbrains]
+installed plugin: PluginNode{id=com.falsepattern.zigbrains, name='ZigBrains'}
+plugin repositories: [null]
+looking up plugins: [com.redhat.devtools.lsp4ij]
+installed plugin: PluginNode{id=com.redhat.devtools.lsp4ij, name='LSP4IJ'}
+plugin repositories: [null]
+looking up plugins: [com.falsepattern.zigbrains]
+installed plugin: PluginNode{id=com.falsepattern.zigbrains, name='ZigBrains'}
+plugin repositories: [null]
+looking up plugins: [com.redhat.devtools.lsp4ij]
+installed plugin: PluginNode{id=com.redhat.devtools.lsp4ij, name='LSP4IJ'}
+plugin repositories: [null]
+looking up plugins: [com.falsepattern.zigbrains]
+installed plugin: PluginNode{id=com.falsepattern.zigbrains, name='ZigBrains'}
+plugin repositories: [null]
+looking up plugins: [com.redhat.devtools.lsp4ij]
+installed plugin: PluginNode{id=com.redhat.devtools.lsp4ij, name='LSP4IJ'}
+plugin repositories: [null]
+looking up plugins: [com.falsepattern.zigbrains]
+installed plugin: PluginNode{id=com.falsepattern.zigbrains, name='ZigBrains'}
+plugin repositories: [null]
+looking up plugins: [com.redhat.devtools.lsp4ij]
+installed plugin: PluginNode{id=com.redhat.devtools.lsp4ij, name='LSP4IJ'}
+mac  ·  git@github.com:cdenihan/jbsync-data.git on main
+4 settings into IDEs  ·  1 setting into the store
+
+WebStorm2026.2  (WebStorm)
+  options/laf.xml
+    to IDE    LafManager/laf/themeId              Islands Light -> (default)
+
+IntelliJIdea2026.2  (IntelliJ IDEA)
+  options/laf.xml
+    to IDE    LafManager/laf/themeId              Islands Light -> (default)
+
+RustRover2026.2  (RustRover)
+  options/laf.xml
+    to IDE    LafManager/laf/themeId              Islands Light -> (default)
+
+CLion2026.2  (CLion)
+  options/laf.xml
+    to store  LafManager/laf/themeId              Islands Light -> (default)
+
+PyCharm2026.2  (PyCharm)
+  options/laf.xml
+    to IDE    LafManager/laf/themeId              Islands Light -> (default)
+
+Plugins
+  + com.falsepattern.zigbrains (30.0.1-261)
+  + com.redhat.devtools.lsp4ij (0.20.1)
+  WebStorm2026.2: install com.falsepattern.zigbrains
+  WebStorm2026.2: install com.redhat.devtools.lsp4ij
+  IntelliJIdea2026.2: install com.falsepattern.zigbrains
+  IntelliJIdea2026.2: install com.redhat.devtools.lsp4ij
+  RustRover2026.2: install com.falsepattern.zigbrains
+  RustRover2026.2: install com.redhat.devtools.lsp4ij
+  PyCharm2026.2: install com.falsepattern.zigbrains
+  PyCharm2026.2: install com.redhat.devtools.lsp4ij
+
+Committed: 2 file(s) at 321ef6a5 I would prefer if the CLI doesn't delete the plugins itself but rather boots the IDE the way it installs the plugins to uninstall them
