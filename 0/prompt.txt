@@ -1,0 +1,1 @@
+Codex left some more feedback. Please implement it directly on main and push it. Keep the repo public and don't make it private again https://github.com/cdenihan/jbsync/pull/6#pullrequestreview-4819283610
