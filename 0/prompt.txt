@@ -1,0 +1,1 @@
+Few things. The CLI says committing when there weren't any changes when you run the sync command. Additionally, can you please make it so that this is an opt out flag rather than an opt in flag --install-plugins
