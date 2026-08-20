@@ -961,12 +961,15 @@ struct WriteBack<'a> {
     stamp: &'a str,
 }
 
-/// Buffers writes so a dry run can still be truthful.
+/// Remembers writes so every pass sees one coherent run.
 ///
 /// A sync reconciles the IDEs one after another, so the second IDE must see
-/// what the first contributed. During a dry run nothing reaches disk, and
-/// without this buffer every IDE would report the store as empty and claim to
-/// be adding files that an earlier IDE had already supplied.
+/// what the first contributed. During a dry run nothing reaches disk, and a
+/// live IDE can rewrite a real file immediately after jbsync replaces it. In
+/// both cases, rereading the filesystem would make a later pass observe a
+/// different state from the one this run just agreed on. Keep every write in
+/// the buffer for the lifetime of the run; real writes still reach disk
+/// immediately, while subsequent reads use the exact bytes jbsync wrote.
 #[derive(Default)]
 struct Staging {
     dry_run: bool,
@@ -989,12 +992,12 @@ impl Staging {
     }
 
     fn write(&mut self, path: &Path, content: Option<&[u8]>) -> Result<()> {
-        if self.dry_run {
-            self.pending
-                .insert(path.to_path_buf(), content.map(<[u8]>::to_vec));
-            return Ok(());
+        let content = content.map(<[u8]>::to_vec);
+        if !self.dry_run {
+            write_or_remove(path, content.as_deref())?;
         }
-        write_or_remove(path, content)
+        self.pending.insert(path.to_path_buf(), content);
+        Ok(())
     }
 
     /// Paths beneath `root` that exist once buffered writes are taken into
@@ -1213,5 +1216,34 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), b"<b />");
         write_or_remove(&path, None).unwrap();
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn real_staging_reads_its_own_write_when_the_file_changes_underneath_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("editor.xml");
+        std::fs::write(&path, b"before").unwrap();
+
+        let mut staging = Staging::new(false);
+        staging.write(&path, Some(b"agreed")).unwrap();
+        // An open IDE can notice the replacement and immediately serialize
+        // its in-memory model back over the file.
+        std::fs::write(&path, b"rewritten by IDE").unwrap();
+
+        assert_eq!(staging.read(&path).as_deref(), Some(b"agreed".as_slice()));
+        assert_eq!(std::fs::read(&path).unwrap(), b"rewritten by IDE");
+    }
+
+    #[test]
+    fn real_staging_remembers_a_removal_when_the_file_reappears() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("editor.xml");
+        std::fs::write(&path, b"before").unwrap();
+
+        let mut staging = Staging::new(false);
+        staging.write(&path, None).unwrap();
+        std::fs::write(&path, b"rewritten by IDE").unwrap();
+
+        assert_eq!(staging.read(&path), None);
     }
 }
