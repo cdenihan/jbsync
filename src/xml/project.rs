@@ -383,7 +383,7 @@ mod tests {
             "component[name=Nope]/@value",
             "x"
         ));
-        assert!(target.children.is_empty());
+        assert_eq!(target.children.len(), 0);
     }
 
     #[test]

@@ -1005,6 +1005,6 @@ mod tests {
     fn a_missing_manifest_is_simply_empty() {
         let directory = tempfile::tempdir().unwrap();
         let manifest = Manifest::load(&directory.path().join("absent.json")).unwrap();
-        assert!(manifest.plugins.is_empty());
+        assert_eq!(manifest.plugins.len(), 0);
     }
 }

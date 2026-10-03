@@ -732,6 +732,6 @@ mod tests {
         )
         .unwrap();
         let outcome = prune_document("options/editor.xml", &mut root, &[], true, None);
-        assert!(outcome.removed.is_empty());
+        assert_eq!(outcome.removed.len(), 0);
     }
 }
