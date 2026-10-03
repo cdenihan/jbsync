@@ -1,0 +1,7 @@
+<send_user_message_question_reply>
+[{"questionItemId":"[\"request_user_input_async\",\"call_L3H5ecsLdjVfp4MTL6Yjnkmu\",0]","question":"For platform support, should jbsync support only Apple Silicon Macs, or keep Linux/Windows and remove only Intel Macs?","answer":"Only Apple Silicon Macs"}]
+</send_user_message_question_reply>
+
+---
+
+Can you please axe the rust code in the repo and prep the Zig version for prod
