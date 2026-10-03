@@ -1,0 +1,1 @@
+Can you please axe the rust code in the repo and prep the Zig version for prod
