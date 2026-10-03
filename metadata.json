@@ -1,0 +1,34 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M41VCGCMVSKVAPRR54SE4DRZ",
+  "strategy": "manual-commit",
+  "branch": "codex/zig-0.17-rewrite",
+  "checkpoints_count": 1,
+  "files_touched": [
+    ".github/workflows/ci.yml",
+    ".github/workflows/zig.yml",
+    "docs/zig-rewrite.md",
+    "mise.toml",
+    "src/zig/cli.zig",
+    "src/zig/engine.zig",
+    "src/zig/settings.zig",
+    "tests/zig/installer.py",
+    "tests/zig/integration.py"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 24311,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 1798016,
+    "output_tokens": 9242,
+    "api_call_count": 11
+  }
+}
