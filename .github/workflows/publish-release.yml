@@ -30,7 +30,7 @@ jobs:
     outputs:
       cache-write: ${{ steps.verify.outputs.cache-write }}
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.commit }}
           fetch-depth: 0
@@ -46,7 +46,10 @@ jobs:
           [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]
           default_branch="$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.default_branch')"
           [[ "$GITHUB_REF" == "refs/heads/${default_branch}" ]]
+          python3 -c 'import os, re, datetime; m = re.fullmatch(r"([0-9]{4})\.([0-9]{2})\.([0-9]{2})\.([1-9][0-9]*)", os.environ["RELEASE_VERSION"]); assert m; datetime.date(*map(int, m.groups()[:3]))'
+          [[ "$(cat VERSION)" == "$RELEASE_VERSION" ]]
           [[ "$RELEASE_TAG" == "v${RELEASE_VERSION}" ]]
+          [[ "$RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
           tagged_commit="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" --jq '.object.sha')"
           [[ "$tagged_commit" == "$RELEASE_COMMIT" ]]
           git fetch origin "$default_branch"
@@ -54,36 +57,29 @@ jobs:
           echo 'cache-write=true' >> "$GITHUB_OUTPUT"
 
   build:
-    name: Build Apple Silicon Rust baseline
+    name: Build Apple Silicon Zig release
     needs: verify-release
-    env:
-      DEPENDENCY_TOKEN: ${{ secrets.RUST_CLI_TOOLKIT_TOKEN }}
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.commit }}
-      - name: Authenticate private Cargo dependencies
-        if: env.DEPENDENCY_TOKEN != ''
-        shell: bash
-        run: git config --global url."https://x-access-token:${DEPENDENCY_TOKEN}@github.com/".insteadOf "https://github.com/"
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
         with:
-          targets: aarch64-apple-darwin
-      - uses: Swatinem/rust-cache@v2.9.1
-        with:
-          prefix-key: v1-rust
-          shared-key: release-${{ github.repository_id }}-aarch64-apple-darwin
-          cache-bin: false
-          cache-on-failure: false
-          save-if: ${{ needs.verify-release.outputs.cache-write == 'true' }}
+          version: 0.17.0
       - name: Build
-        run: cargo build --locked --release --target aarch64-apple-darwin --package jbsync
+        run: |
+          test "$(uname -m)" = arm64
+          zig build test -Dtarget=aarch64-macos -Doptimize=ReleaseSafe
+          zig build -Dtarget=aarch64-macos -Doptimize=ReleaseSafe
+          test "$(lipo -archs zig-out/bin/jbsync)" = arm64
       - name: Verify compiled release version
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
         shell: bash
         run: |
-          reported_version="$("target/aarch64-apple-darwin/release/jbsync" --version)"
-          expected_version="jbsync ${{ inputs.version }}"
+          reported_version="$("zig-out/bin/jbsync" --version)"
+          expected_version="jbsync $RELEASE_VERSION"
           [[ "$reported_version" == "$expected_version" ]] || {
             echo "Expected '$expected_version', got '$reported_version'" >&2
             exit 1
@@ -94,27 +90,23 @@ jobs:
           binary="jbsync"
           artifact="jbsync-macos-aarch64"
           mkdir -p dist
-          cp "target/aarch64-apple-darwin/release/${binary}" "dist/${artifact}"
+          cp "zig-out/bin/${binary}" "dist/${artifact}"
           (cd dist && openssl dgst -sha256 -r "$artifact" > "$artifact.sha256")
-      - uses: actions/upload-artifact@v7.0.1
+      - uses: actions/upload-artifact@v4
         with:
           name: jbsync-macos-aarch64
           path: dist/*
           if-no-files-found: error
-      - name: Remove private dependency credential
-        if: always() && env.DEPENDENCY_TOKEN != ''
-        shell: bash
-        run: git config --global --unset-all url."https://x-access-token:${DEPENDENCY_TOKEN}@github.com/".insteadOf || true
 
   publish:
     name: Publish GitHub release
     needs: build
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.commit }}
-      - uses: actions/download-artifact@v8.0.1
+      - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
@@ -123,7 +115,7 @@ jobs:
       - name: Add installer checksums
         shell: bash
         run: |
-          printf '%s\n' '${{ inputs.version }}' > dist/VERSION
+          cp VERSION dist/VERSION
           chmod 0755 dist/install.sh
           (cd dist && openssl dgst -sha256 -r VERSION > VERSION.sha256)
           (cd dist && openssl dgst -sha256 -r install.sh > install.sh.sha256)
@@ -145,8 +137,8 @@ jobs:
 
   cleanup_failed_tag:
     name: Clean up failed release reservation
-    if: ${{ always() && needs.publish.result != 'success' }}
-    needs: [build, publish]
+    if: ${{ always() && needs.verify-release.result == 'success' && needs.publish.result != 'success' }}
+    needs: [verify-release, build, publish]
     runs-on: macos-15
     steps:
       - name: Delete this run's unused reserved tag

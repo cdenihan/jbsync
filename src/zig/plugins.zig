@@ -148,7 +148,7 @@ pub fn compatible(a: A, plugin: Plugin, ide: settings.Ide, capabilities: *const 
         if (!settings.glob(try config.string(rule, "id", "*"), plugin.id)) continue;
         const pattern = try config.string(rule, "ide", "*");
         const matches = settings.glob(pattern, ide.name) or settings.glob(pattern, ide.product);
-        const action = try config.string(rule, "action", "");
+        const action = try std.ascii.allocLowerString(a, try config.string(rule, "action", ""));
         if (eq(u8, action, "only")) manual = matches else if (matches and eq(u8, action, "allow")) manual = true else if (matches and eq(u8, action, "deny")) manual = false;
     }
     if (manual) |allow| return if (allow) null else "manual plugin rule";

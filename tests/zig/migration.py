@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
-"""Upgrade a real Rust-created store/baselines to Zig, then read it with Rust."""
+"""Upgrade frozen legacy stores and baselines on two machines."""
 import importlib.util
+import base64
+import json
 from pathlib import Path
 import sys
 import tempfile
 
-if len(sys.argv) != 3:
-    raise SystemExit('usage: migration.py ZIG_BINARY RUST_BINARY')
-zig, rust = (Path(p).resolve() for p in sys.argv[1:])
+if len(sys.argv) != 2:
+    raise SystemExit('usage: migration.py ZIG_BINARY')
+zig = Path(sys.argv[1]).resolve()
 sys.argv = [sys.argv[0], str(zig)]
 spec = importlib.util.spec_from_file_location('fixtures', Path(__file__).with_name('integration.py'))
 fixtures = importlib.util.module_from_spec(spec)
@@ -19,14 +21,23 @@ with tempfile.TemporaryDirectory(prefix='jbsync-migration-') as temp:
     fixtures.git('init', '--bare', '-b', 'main', remote)
     a = fixtures.Machine(root / 'a', remote)
     b = fixtures.Machine(root / 'b', remote, names=(a.names[0],))
-    fixtures.BINARY = rust
-    for name in a.names:
-        a.option(name)
-    a.sync()
-    b.sync()
-    assert b.value(b.names[0]) == '4'
-    # Real persisted Rust defaults, manifest, Git attributes and baseline files
-    # remain in place. Zig must recognize disjoint edits against those bases.
+    saved = json.loads(Path(__file__).with_name('legacy-store.json').read_text())['machines']
+    for name, machine in [('a', a), ('b', b)]:
+        for relative, encoded in saved[name].items():
+            path = machine.path / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(base64.b64decode(encoded))
+        store = machine.app / 'data'
+        fixtures.git('-C', store, 'init', '-b', 'main')
+        fixtures.git('-C', store, 'config', 'user.name', 'migration fixture')
+        fixtures.git('-C', store, 'config', 'user.email', 'fixture@example.invalid')
+        fixtures.git('-C', store, 'add', '.')
+        fixtures.git('-C', store, 'commit', '-m', 'Frozen legacy store')
+        fixtures.git('-C', store, 'remote', 'add', 'origin', remote)
+    fixtures.git('-C', a.app / 'data', 'push', 'origin', 'main')
+    # Both stores begin at the same commit, as after the original two-machine sync.
+    fixtures.git('-C', b.app / 'data', 'fetch', 'origin')
+    fixtures.git('-C', b.app / 'data', 'reset', '--hard', 'origin/main')
     a.option(a.names[0], tabs='8')
     a.option(a.names[1], wrap='false')
     fixtures.BINARY = zig
@@ -40,12 +51,4 @@ with tempfile.TemporaryDirectory(prefix='jbsync-migration-') as temp:
         m.sync()
         assert before == m.snapshot(), 'Zig upgrade failed to settle'
     fixtures.git('--git-dir', remote, 'fsck', '--no-reflogs')
-    # The XML/store schema must still be readable by the retained Rust baseline.
-    fixtures.BINARY = rust
-    a.sync()
-    b.sync()
-    for m in (a, b):
-        for name in m.names:
-            assert m.value(name) == '8'
-            assert m.value(name, 'wrap') == 'false'
-    print('Rust → Zig → Rust: two-machine persisted-store migration passed')
+    print('Legacy → Zig: two-machine persisted-store migration passed')

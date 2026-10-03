@@ -1,5 +1,5 @@
 //! Configuration TOML subset used by jbsync: tables, arrays of tables,
-//! strings, booleans, integers, arrays and inline tables. Unsupported value
+//! single/multiline strings, booleans, integers, arrays and inline tables. Unsupported value
 //! types fail explicitly rather than silently changing sync policy.
 const std = @import("std");
 const A = std.mem.Allocator;
@@ -68,13 +68,33 @@ const Parser = struct {
     }
     fn quoted(p: *Parser) ![]const u8 {
         const delimiter = p.source[p.pos];
-        p.pos += 1;
+        const multiline = p.pos + 3 <= p.source.len and p.source[p.pos + 1] == delimiter and p.source[p.pos + 2] == delimiter;
+        p.pos += if (multiline) @as(usize, 3) else 1;
+        if (multiline and p.pos < p.source.len) {
+            if (p.source[p.pos] == '\r' and p.pos + 1 < p.source.len and p.source[p.pos + 1] == '\n') p.pos += 1;
+            if (p.source[p.pos] == '\n') p.pos += 1;
+        }
         var out: std.ArrayList(u8) = .empty;
         while (p.pos < p.source.len) {
-            const c = p.source[p.pos];
+            var c = p.source[p.pos];
             p.pos += 1;
-            if (c == delimiter) return out.toOwnedSlice(p.a);
-            if (c < 0x20 and c != '\t') return error.InvalidToml;
+            if (c == delimiter) {
+                if (!multiline) return out.toOwnedSlice(p.a);
+                var count: usize = 1;
+                while (p.pos < p.source.len and p.source[p.pos] == delimiter) : (count += 1) p.pos += 1;
+                if (count >= 3) {
+                    if (count > 5) return error.InvalidToml;
+                    try out.appendNTimes(p.a, delimiter, count - 3);
+                    return out.toOwnedSlice(p.a);
+                }
+                try out.appendNTimes(p.a, delimiter, count);
+                continue;
+            }
+            if (multiline and c == '\r' and p.pos < p.source.len and p.source[p.pos] == '\n') {
+                p.pos += 1;
+                c = '\n';
+            }
+            if ((c < 0x20 and c != '\t' and !(multiline and c == '\n')) or c == 0x7f) return error.InvalidToml;
             if (c != '\\' or delimiter == '\'') {
                 try out.append(p.a, c);
                 continue;
@@ -82,6 +102,14 @@ const Parser = struct {
             if (p.pos >= p.source.len) return error.InvalidToml;
             const escaped = p.source[p.pos];
             p.pos += 1;
+            if (multiline and std.ascii.isWhitespace(escaped)) {
+                var newline = escaped == '\n';
+                while (p.pos < p.source.len and std.ascii.isWhitespace(p.source[p.pos])) : (p.pos += 1) {
+                    if (p.source[p.pos] == '\n') newline = true;
+                }
+                if (!newline) return error.InvalidToml;
+                continue;
+            }
             switch (escaped) {
                 'n' => try out.append(p.a, '\n'),
                 'r' => try out.append(p.a, '\r'),
@@ -105,7 +133,10 @@ const Parser = struct {
     }
     fn key(p: *Parser) ![]const u8 {
         if (p.pos >= p.source.len) return error.InvalidToml;
-        if (p.source[p.pos] == '"' or p.source[p.pos] == '\'') return p.quoted();
+        if (p.source[p.pos] == '"' or p.source[p.pos] == '\'') {
+            if (p.pos + 3 <= p.source.len and p.source[p.pos + 1] == p.source[p.pos] and p.source[p.pos + 2] == p.source[p.pos]) return error.InvalidToml;
+            return p.quoted();
+        }
         const start = p.pos;
         while (p.pos < p.source.len and (std.ascii.isAlphanumeric(p.source[p.pos]) or p.source[p.pos] == '_' or p.source[p.pos] == '-')) p.pos += 1;
         if (p.pos == start) return error.InvalidToml;
@@ -175,6 +206,8 @@ const Parser = struct {
                 const token = p.source[start..p.pos];
                 if (eq(u8, token, "true")) return .{ .boolean = true };
                 if (eq(u8, token, "false")) return .{ .boolean = false };
+                const unsigned = if (token.len > 0 and (token[0] == '+' or token[0] == '-')) token[1..] else token;
+                if (unsigned.len > 1 and unsigned[0] == '0' and (std.ascii.isDigit(unsigned[1]) or unsigned[1] == '_')) return error.InvalidToml;
                 return .{ .integer = std.fmt.parseInt(i64, token, 0) catch return error.UnsupportedTomlValue };
             },
         }
@@ -203,6 +236,7 @@ fn put(a: A, current: *Value, path: []const []const u8, v: Value) !void {
 pub fn parse(a: A, source: []const u8) !Value {
     if (!std.unicode.utf8ValidateSlice(source)) return error.InvalidToml;
     var root: Value = .{ .table = .empty };
+    var declared: std.StringHashMapUnmanaged(void) = .empty;
     var current = &root;
     var p: Parser = .{ .a = a, .source = source };
     while (true) {
@@ -216,7 +250,14 @@ pub fn parse(a: A, source: []const u8) !Value {
             try p.take(']');
             if (many) try p.take(']');
             current = &root;
-            for (parts[0 .. parts.len - 1]) |part| current = try child(a, current, part);
+            var scope: std.Io.Writer.Allocating = .init(a);
+            for (parts[0 .. parts.len - 1]) |part| {
+                try scope.writer.print("/{s}", .{try quote(a, part)});
+                if (current.get(part)) |v| if (v == .array) {
+                    try scope.writer.print("[{d}]", .{v.array.items.len});
+                };
+                current = try child(a, current, part);
+            }
             const last = parts[parts.len - 1];
             if (many) {
                 if (current.* != .table) return error.InvalidToml;
@@ -225,7 +266,13 @@ pub fn parse(a: A, source: []const u8) !Value {
                 if (entry.value_ptr.* != .array) return error.InvalidToml;
                 try entry.value_ptr.array.append(a, .{ .table = .empty });
                 current = &entry.value_ptr.array.items[entry.value_ptr.array.items.len - 1];
-            } else current = try child(a, current, last);
+            } else {
+                if (current.get(last)) |v| if (v == .array) return error.InvalidToml;
+                try scope.writer.print("/{s}", .{try quote(a, last)});
+                const entry = try declared.getOrPut(a, try scope.toOwnedSlice());
+                if (entry.found_existing) return error.DuplicateTomlTable;
+                current = try child(a, current, last);
+            }
         } else {
             const parts = try p.path();
             try p.take('=');
@@ -269,7 +316,7 @@ pub const Local = struct {
     root: ?[]const u8 = null,
     install_roots: []const []const u8 = &.{},
     machine: []const u8 = "machine",
-    pub fn load(a: A, raw: []const u8, hostname: []const u8) !Local {
+    pub fn load(a: A, raw: []const u8, hostname: ?[]const u8) !Local {
         const doc = try parse(a, raw);
         const repo = try table(doc, "repo");
         const jb = try table(doc, "jetbrains");
@@ -281,7 +328,7 @@ pub const Local = struct {
             .store = if (repo.get("path")) |v| try v.str() else null,
             .root = if (jb.get("root")) |v| try v.str() else null,
             .install_roots = try strings(a, jb, "install_roots", &.{}),
-            .machine = try sanitize(a, try string(m, "id", hostname)),
+            .machine = try sanitize(a, if (m.get("id")) |id| try id.str() else hostname orelse return error.MachineIdNotConfigured),
         };
     }
     pub fn encode(self: Local, a: A) ![]const u8 {
@@ -341,4 +388,22 @@ test "comments, multiline arrays, inline maps and omit tables" {
     try std.testing.expectEqualStrings("options/laf.xml", s.exclude[0]);
     try std.testing.expectError(error.DuplicateTomlKey, parse(a, "x=1\nx=2\n"));
     try std.testing.expectError(error.InvalidConfigType, Sync.load(a, "[jetbrains]\nbackups='false'", ""));
+}
+
+test "multiline configuration strings preserve values and fold escaped newlines" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const doc = try parse(arena.allocator(), "a = \"\"\"\nhello\r\nworld\"\"\"\nb = " ++ "'''\nC:\\Users\\test\n'''\n" ++ "c = \"\"\"a\\\n  b\"\"\"\n");
+    try std.testing.expectEqualStrings("hello\nworld", try string(doc, "a", ""));
+    try std.testing.expectEqualStrings("C:\\Users\\test\n", try string(doc, "b", ""));
+    try std.testing.expectEqualStrings("ab", try string(doc, "c", ""));
+}
+
+test "configuration rejects duplicate table headers and invalid decimal integers" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    try std.testing.expectError(error.DuplicateTomlTable, parse(a, "[repo]\nbranch='main'\n[repo]\nremote='x'\n"));
+    try std.testing.expectError(error.InvalidToml, parse(a, "version=01\n"));
+    _ = try parse(a, "[[plugins.rule]]\nid='a'\n[plugins.rule.extra]\na=1\n[[plugins.rule]]\nid='b'\n[plugins.rule.extra]\na=2\n");
 }

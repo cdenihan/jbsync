@@ -7,7 +7,7 @@ const plugins = @import("plugins.zig");
 const A = std.mem.Allocator;
 const eq = std.mem.eql;
 const usage =
-    \\jbsync — settings and plugin sync for JetBrains IDEs (experimental Zig build)
+    \\jbsync — settings and plugin sync for JetBrains IDEs
     \\
     \\Usage: jbsync [--config-dir PATH] [--verbose] COMMAND
     \\Commands:
@@ -20,7 +20,7 @@ const usage =
     \\  plugins [only|allow|deny ID [--ide GLOB]]
     \\  disable-builtin-sync [--dry-run]
     \\  completions bash|zsh|fish|powershell|elvish
-    \\  update (unavailable until Zig release packaging is validated)
+    \\  update [--version VERSION] [--json]
     \\
 ;
 const Args = struct {
@@ -32,6 +32,8 @@ const Args = struct {
     verbose: bool = false,
     help: bool = false,
     version: bool = false,
+    update_version: []const u8 = "latest",
+    json: bool = false,
     options: Options = .{},
 };
 fn parseArgs(a: A, argv: []const []const u8) !Args {
@@ -40,14 +42,15 @@ fn parseArgs(a: A, argv: []const []const u8) !Args {
     var i: usize = 1;
     while (i < argv.len) : (i += 1) {
         const s = argv[i];
+        const update_command = result.words.items.len != 0 and eq(u8, result.words.items[0], "update");
         if (s.len != 0 and s[0] == '-') {
             const end = std.mem.indexOfScalar(u8, s, '=') orelse s.len;
             try result.flags.append(a, s[0..end]);
         }
-        if (eq(u8, s, "--help") or eq(u8, s, "-h")) result.help = true else if (eq(u8, s, "--version") or eq(u8, s, "-V")) result.version = true else if (eq(u8, s, "--verbose") or eq(u8, s, "-v")) result.verbose = true else if (eq(u8, s, "--dry-run")) result.options.dry_run = true else if (eq(u8, s, "--collect-only")) result.options.collect_only = true else if (eq(u8, s, "--no-install-plugins")) result.options.install_plugins = false else if (eq(u8, s, "--install-plugins")) {} else if (s.len != 0 and s[0] == '-') {
+        if (eq(u8, s, "--json")) result.json = true else if (eq(u8, s, "--help") or eq(u8, s, "-h")) result.help = true else if ((eq(u8, s, "--version") and !update_command) or eq(u8, s, "-V")) result.version = true else if (eq(u8, s, "--verbose") or eq(u8, s, "-v")) result.verbose = true else if (eq(u8, s, "--dry-run")) result.options.dry_run = true else if (eq(u8, s, "--collect-only")) result.options.collect_only = true else if (eq(u8, s, "--no-install-plugins")) result.options.install_plugins = false else if (eq(u8, s, "--install-plugins")) {} else if (s.len != 0 and s[0] == '-') {
             const sep = std.mem.indexOfScalar(u8, s, '=');
             const flag = if (sep) |n| s[0..n] else s;
-            const recognized = eq(u8, flag, "--config-dir") or eq(u8, flag, "--remote") or eq(u8, flag, "--machine") or eq(u8, flag, "--ide") or eq(u8, flag, "--message") or eq(u8, flag, "-m") or eq(u8, flag, "--prefer");
+            const recognized = eq(u8, flag, "--config-dir") or eq(u8, flag, "--remote") or eq(u8, flag, "--machine") or eq(u8, flag, "--ide") or eq(u8, flag, "--message") or eq(u8, flag, "-m") or eq(u8, flag, "--prefer") or (update_command and eq(u8, flag, "--version"));
             if (!recognized) return error.UnknownOption;
             const value = if (sep) |n| s[n + 1 ..] else blk: {
                 i += 1;
@@ -55,7 +58,7 @@ fn parseArgs(a: A, argv: []const []const u8) !Args {
                 break :blk argv[i];
             };
             if (value.len == 0) return error.MissingOptionValue;
-            if (eq(u8, flag, "--config-dir")) result.root = value else if (eq(u8, flag, "--remote")) result.remote = value else if (eq(u8, flag, "--machine")) result.machine = value else if (eq(u8, flag, "--ide")) try only.append(a, value) else if (eq(u8, flag, "--prefer")) result.options.policy = std.meta.stringToEnum(@import("merge.zig").Policy, value) orelse return error.InvalidConflictPolicy else result.options.message = value;
+            if (eq(u8, flag, "--version")) result.update_version = value else if (eq(u8, flag, "--config-dir")) result.root = value else if (eq(u8, flag, "--remote")) result.remote = value else if (eq(u8, flag, "--machine")) result.machine = value else if (eq(u8, flag, "--ide")) try only.append(a, value) else if (eq(u8, flag, "--prefer")) result.options.policy = std.meta.stringToEnum(@import("merge.zig").Policy, value) orelse return error.InvalidConflictPolicy else result.options.message = value;
         } else try result.words.append(a, s);
     }
     result.options.only = only.items;
@@ -75,7 +78,7 @@ pub fn run(a: A, io: std.Io, env: *const std.process.Environ.Map, argv: []const 
     const command = words[0];
     for (args.flags.items) |flag| {
         if (eq(u8, flag, "--config-dir") or eq(u8, flag, "--verbose") or eq(u8, flag, "-v")) continue;
-        const allowed = if (eq(u8, command, "sync")) !eq(u8, flag, "--remote") and !eq(u8, flag, "--machine") else if (eq(u8, command, "init")) eq(u8, flag, "--remote") or eq(u8, flag, "--machine") else if (eq(u8, command, "disable-builtin-sync")) eq(u8, flag, "--dry-run") else if (eq(u8, command, "plugins")) eq(u8, flag, "--ide") else false;
+        const allowed = if (eq(u8, command, "sync")) !eq(u8, flag, "--remote") and !eq(u8, flag, "--machine") else if (eq(u8, command, "update")) eq(u8, flag, "--version") or eq(u8, flag, "--json") else if (eq(u8, command, "init")) eq(u8, flag, "--remote") or eq(u8, flag, "--machine") else if (eq(u8, command, "disable-builtin-sync")) eq(u8, flag, "--dry-run") else if (eq(u8, command, "plugins")) eq(u8, flag, "--ide") else false;
         if (!allowed) return error.OptionNotValidForCommand;
     }
     if (eq(u8, command, "completions")) {
@@ -83,8 +86,8 @@ pub fn run(a: A, io: std.Io, env: *const std.process.Environ.Map, argv: []const 
         return completions(words[1], out);
     }
     if (eq(u8, command, "update")) {
-        try out.writeAll("Self-update is unavailable for the experimental Zig build; build this PR with Zig 0.17.0.\n");
-        return error.UpdateUnavailableForExperimentalBuild;
+        if (words.len != 1) return error.InvalidArguments;
+        return @import("update.zig").run(a, io, args.update_version, args.json, out);
     }
     const known = [_][]const u8{ "init", "status", "sync", "ides", "repo", "plugins", "disable-builtin-sync" };
     var valid = false;
@@ -94,17 +97,17 @@ pub fn run(a: A, io: std.Io, env: *const std.process.Environ.Map, argv: []const 
     if (!valid) return error.UnknownCommand;
     if (!eq(u8, command, "repo") and !eq(u8, command, "plugins") and words.len != 1) return error.InvalidArguments;
     const fs: files.Fs = .{ .allocator = a, .io = io };
-    const home = env.get("HOME") orelse env.get("USERPROFILE") orelse return error.HomeNotFound;
+    const home = env.get("HOME") orelse return error.HomeNotFound;
     const root = args.root orelse env.get("JBSYNC_CONFIG_DIR") orelse try fs.join(&.{ home, ".jbsync" });
     if (eq(u8, command, "init")) {
         const path = try fs.join(&.{ root, "config.toml" });
-        var local = try config.Local.load(a, (try fs.read(path)) orelse "", args.machine orelse try @import("engine.zig").hostname(fs, env));
+        var local = try Engine.loadLocal(fs, (try fs.read(path)) orelse "", env, args.machine);
         if (args.remote) |s| local.remote = s;
         if (args.machine) |s| local.machine = try config.sanitize(a, s);
+        const guard = try Engine.lockAt(fs, root);
+        defer guard.close(io);
         try fs.write(path, try local.encode(a));
         var engine = try Engine.open(fs, root, env);
-        const guard = try engine.lock();
-        defer guard.close(io);
         try engine.git.initialize(true);
         try out.print("config  {s}\nstore   {s}\nmachine {s}\nfound   {d} IDE(s)\n\nNext: jbsync status\n", .{ path, engine.git.root, engine.local.machine, engine.ides.len });
         return;

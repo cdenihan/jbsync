@@ -232,14 +232,15 @@ Sorting attributes is what makes diffs meaningful: without it, an IDE rewriting
 a file in a different attribute order looks like a change. Child order is
 *preserved*, because in JetBrains XML a list's order is often the setting.
 
-The guarantee is checked against a real installation, not a fixture set: parse →
+The guarantee is checked against real XML fixtures: parse →
 serialize → parse must produce an identical document and an identical
 projection, and serializing twice must produce identical bytes. Run it against
 your own config:
 
 ```console
-$ JBSYNC_CORPUS="$HOME/Library/Application Support/JetBrains" \
-    cargo test --test roundtrip -- --include-ignored
+$ zig build validation
+$ python3 tests/zig/corpus.py zig-out/bin/jbsync-validation \
+    "$HOME/Library/Application Support/JetBrains"
 ```
 
 ### The flat projection
@@ -329,27 +330,10 @@ plugins.json         the plugin manifest
 shared/              the settings, as canonical XML
 ```
 
-The engine never talks to Git. It asks a `Backend` for three views — what this
-machine has, what everyone else has, and the last state both agreed on — merges
-them itself, and hands the result back.
-
-### Other backends
-
-That contract is the smallest one supporting a real three-way merge, and every
-candidate can satisfy it:
-
-| Backend | working copy | remote | base |
-| --- | --- | --- | --- |
-| Git (shipping) | the work tree | `origin/<branch>` | `git merge-base` |
-| Turso / libSQL | local replica | `SELECT` after pull | last-synced snapshot |
-| Custom HTTP | local cache | `GET /changes` | last-synced snapshot |
-| Convex | local cache | `query()` | last-synced snapshot |
-
-A backend that cannot name a common ancestor keeps a copy of the last state it
-reconciled; that snapshot *is* the base. Reactivity is deliberately outside the
-trait — only Convex offers real push, so it belongs in a separate opt-in
-capability rather than forcing every backend to fake one. `repo.backend` in
-`config.toml` already selects the implementation.
+The Zig engine reconciles three views of settings: local settings, the shared
+store, and each IDE's last accepted baseline. For remote Git changes it uses
+the common ancestor of the local and remote tips. Git transports the reconciled
+files and records history; it does not merge XML with line-based rules.
 
 ### Why Git is a subprocess
 
@@ -454,12 +438,13 @@ jbsync is a CLI you can run by hand, from a shell hook, or on a timer.
 
 | Path | Responsibility |
 | --- | --- |
-| `src/xml/dom.rs` | Order-preserving DOM and the deterministic serializer |
-| `src/xml/project.rs` | The flat projection, and grafting leaves back into a tree |
-| `src/settings/roamable.rs` | The learned manifest, exclusions, filename mapping |
-| `src/settings/prune.rs` | What counts as a user choice |
-| `src/sync/merge.rs` | Three-way merge for XML, text and `.vmoptions` |
-| `src/sync/engine.rs` | Orchestration, staging, the convergence loop |
-| `src/sync/report.rs` | What a run reports |
-| `src/backend.rs` | The backend contract |
-| `src/plugins.rs` | Descriptors, compatibility, the manifest |
+| `src/zig/xml.zig` | Ordered DOM, canonical serialization, projection and patching |
+| `src/zig/settings.zig` | Discovery, roaming policy and factory-default pruning |
+| `src/zig/policy.zig` | Built-in exclusions and defaults |
+| `src/zig/merge.zig` | Three-way XML, text and JVM-option merges |
+| `src/zig/engine.zig` | Staging, backups, reporting and convergence |
+| `src/zig/files.zig` | Bounded reads, symlink checks and atomic writes |
+| `src/zig/git.zig` | Git transport and history |
+| `src/zig/plugins.zig` | Descriptors, compatibility and installation plans |
+| `src/zig/config.zig` | Typed configuration |
+| `src/zig/update.zig` | Self-update through the embedded release installer |

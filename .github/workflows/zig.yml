@@ -1,4 +1,4 @@
-name: Zig rewrite experiment
+name: CI
 on:
   pull_request:
   push:
@@ -27,19 +27,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: zig fmt --check build.zig build.zig.zon src
-      - run: zig build test --summary all -Dtarget=aarch64-macos -Doptimize=${{ matrix.mode }}
-      - run: zig build validation -Dtarget=aarch64-macos -Doptimize=${{ matrix.mode }}
-      - run: zig build -Dtarget=aarch64-macos -Doptimize=${{ matrix.mode }}
-      - run: python3 tests/zig/integration.py zig-out/bin/jbsync
-      - run: cargo build --locked --example validation_oracle --bin jbsync
-      - run: python3 tests/zig/differential.py zig-out/bin/jbsync-validation target/debug/examples/validation_oracle
-      - run: python3 tests/zig/migration.py zig-out/bin/jbsync target/debug/jbsync
-      - run: sh tests/zig/platform.sh
-      - run: python3 tests/zig/installer.py zig-out/bin/jbsync
+      - name: Validate production build
+        run: sh scripts/check.sh "${{ matrix.mode }}"
       - uses: actions/upload-artifact@v4
         with:
-          name: jbsync-zig-macos-aarch64-${{ matrix.mode }}
+          name: jbsync-macos-aarch64-${{ matrix.mode }}
           path: zig-out/bin/jbsync

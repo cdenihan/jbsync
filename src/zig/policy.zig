@@ -1,4 +1,4 @@
-// Roaming policy data carried forward from the Rust implementation.
+// Built-in roaming policy and defaults.
 pub const manifest = [_][]const u8{
     "codestyles/**",
     "colors/**",

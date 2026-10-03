@@ -1,7 +1,7 @@
 #!/bin/sh
 # Build guards and installer dispatch must agree with the support policy.
 set -eu
-export RUST_CLI_TOOLKIT_INSTALLER_SOURCE_ONLY=1
+export JBSYNC_INSTALLER_SOURCE_ONLY=1
 . ./scripts/install.sh
 test "$(artifact_for Darwin aarch64)" = jbsync-macos-aarch64
 for platform in 'Darwin x86_64' 'Linux aarch64' 'Linux x86_64' 'Windows aarch64'; do

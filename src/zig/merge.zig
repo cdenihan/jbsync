@@ -133,7 +133,7 @@ fn mergeText(a: A, base: ?[]const u8, local: []const u8, remote: []const u8, pol
     const bs = try lineSet(a, bv);
     const ls = try lineSet(a, lv);
     const rs = try lineSet(a, rv);
-    // Retain order and repeated lines exactly as the Rust line-set merge does.
+    // Retain order and repeated lines using the established line-set merge semantics.
     // Hash indexes avoid repeated linear scans through entire JVM option files.
     var remote_added: std.StringHashMapUnmanaged([]const u8) = .empty;
     for (rv) |v| if (!bs.contains(v) and !remote_added.contains(flagKey(v))) try remote_added.put(a, flagKey(v), v);

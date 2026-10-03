@@ -160,6 +160,7 @@ pub fn discover(fs: files.Fs, root: []const u8, patterns: []const []const u8, in
                 if (launches == .array) for (launches.array.items) |launch| {
                     const tag = jsonString(launch, "os") orelse osTag();
                     if (!eq(u8, tag, osTag())) continue;
+                    if (jsonString(launch, "arch")) |arch| if (!eq(u8, arch, "aarch64") and !eq(u8, arch, "arm64")) continue;
                     if (jsonString(launch, "launcherPath")) |s| m.launcher = try fs.join(&.{ std.fs.path.dirname(path) orelse ".", s });
                     if (jsonString(launch, "vmOptionsFilePath")) |s| m.vm_options = std.fs.path.basename(s);
                     break;
@@ -264,7 +265,7 @@ pub fn view(a: A, relative: []const u8, raw: ?[]const u8, c: config.Sync, defaul
         const d: config.Value = defaults.get("files") orelse .{ .table = .empty };
         if (d.get(relative)) |values| defaults_block: {
             const projection = xml.project(a, n) catch |err| switch (err) {
-                // Legacy Rust defaults may contain collapsed duplicate keys.
+                // Legacy defaults may contain collapsed duplicate keys.
                 // Do not suppress values that cannot be addressed uniquely.
                 error.AmbiguousXmlAddress => break :defaults_block,
                 else => return err,

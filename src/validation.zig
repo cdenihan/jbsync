@@ -1,4 +1,4 @@
-//! Batch protocol used only by the Rust/Zig differential test suite.
+//! Batch protocol for regression and read-only corpus validation.
 const std = @import("std");
 const lib = @import("jbsync");
 const Case = struct {

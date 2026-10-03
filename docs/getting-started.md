@@ -1,5 +1,7 @@
 # Getting started
 
+Requires an Apple Silicon Mac running macOS 15 or newer.
+
 This walks through a first machine, a second machine, and what to do when
 something looks wrong. It assumes nothing about Git.
 

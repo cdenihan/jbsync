@@ -1,35 +1,18 @@
 [tools]
-rust = "stable"
 zig = "0.17.0"
 
 [tasks.build]
-description = "Build the debug binary"
-run = "cargo build"
+description = "Build the production Apple Silicon binary"
+run = "zig build -Dtarget=aarch64-macos -Doptimize=ReleaseSafe"
 
 [tasks.test]
-description = "Run the test suite"
-run = "cargo test --locked --all-targets"
-
-[tasks.fmt]
-description = "Check formatting"
-run = "cargo fmt --all -- --check"
-
-[tasks.lint]
-description = "Run clippy with warnings denied"
-run = "cargo clippy --locked --all-targets --all-features -- -D warnings"
-
-[tasks.ci]
-description = "Run everything CI runs"
-depends = ["fmt", "lint", "test"]
-
-[tasks.zig-build]
-description = "Build the experimental Zig implementation"
-run = "zig build -Doptimize=ReleaseSafe"
-
-[tasks.zig-test]
-description = "Test the Zig library and real CLI/Git scenarios"
+description = "Run native tests and disposable CLI scenarios"
 run = ["zig build test", "zig build", "python3 tests/zig/integration.py zig-out/bin/jbsync"]
 
-[tasks.zig-ci]
-description = "Check the Zig rewrite experiment"
-run = ["zig fmt --check build.zig build.zig.zon src", "zig build test --summary all -Doptimize=ReleaseSafe", "zig build -Doptimize=ReleaseSafe", "zig build validation -Doptimize=ReleaseSafe", "cargo build --locked --example validation_oracle --bin jbsync", "python3 tests/zig/integration.py zig-out/bin/jbsync", "python3 tests/zig/differential.py zig-out/bin/jbsync-validation target/debug/examples/validation_oracle", "python3 tests/zig/migration.py zig-out/bin/jbsync target/debug/jbsync", "sh tests/zig/platform.sh", "python3 tests/zig/installer.py zig-out/bin/jbsync"]
+[tasks.fmt]
+description = "Check Zig formatting"
+run = "zig fmt --check build.zig build.zig.zon src"
+
+[tasks.ci]
+description = "Run the full production validation suite"
+run = "sh scripts/check.sh"

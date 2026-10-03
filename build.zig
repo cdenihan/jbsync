@@ -1,9 +1,9 @@
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
-    if (@import("builtin").zig_version.major != 0 or @import("builtin").zig_version.minor != 17)
-        @compileError("This experiment requires Zig 0.17.x");
-    const target = b.standardTargetOptions(.{});
+    if (@import("builtin").zig_version.major != 0 or @import("builtin").zig_version.minor != 17 or @import("builtin").zig_version.patch != 0 or @import("builtin").zig_version.pre != null)
+        @compileError("jbsync requires Zig 0.17.0");
+    const target = b.standardTargetOptions(.{ .default_target = .{ .cpu_arch = .aarch64, .os_tag = .macos, .os_version_min = .{ .semver = .{ .major = 15, .minor = 0, .patch = 0 } } } });
     if (target.result.os.tag != .macos or target.result.cpu.arch != .aarch64)
         @panic("jbsync supports only Apple Silicon Macs (aarch64-macos)");
     const optimize = b.standardOptimizeOption(.{});
@@ -28,6 +28,7 @@ pub fn build(b: *std.Build) void {
 
     const options = b.addOptions();
     options.addOption([]const u8, "version", std.mem.trim(u8, @embedFile("VERSION"), "\r\n "));
+    options.addOption([]const u8, "installer", @embedFile("scripts/install.sh"));
     mod.addOptions("build_options", options);
     b.installArtifact(exe);
 
@@ -40,7 +41,7 @@ pub fn build(b: *std.Build) void {
             .imports = &.{.{ .name = "jbsync", .module = mod }},
         }),
     });
-    const validation = b.step("validation", "Build the Rust differential test helper");
+    const validation = b.step("validation", "Build the regression test helper");
     validation.dependOn(&b.addInstallArtifact(validator, .{}).step);
 
     const run_step = b.step("run", "Run the app");

@@ -32,10 +32,46 @@ class Installer(unittest.TestCase):
         self.installed = self.destination / 'jbsync'
         self.installed.write_bytes(b'previous executable')
 
+    def update(self, **extra):
+        self.installed.write_bytes(binary.read_bytes())
+        self.installed.chmod(0o755)
+        env = dict(os.environ, JBSYNC_RELEASE_BASE_URL=(self.path / 'releases').as_uri())
+        env.pop('JBSYNC_INSTALLER_SOURCE_ONLY', None)
+        return subprocess.run([str(self.installed), 'update', '--version', self.version, '--json'],
+                              env=env, capture_output=True, text=True)
+
+    def test_self_update_json_and_version(self):
+        result = self.update()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        import json
+        summary = json.loads(result.stdout)
+        self.assertEqual(summary['installed_version'], self.version)
+        self.assertEqual(summary['status'], 'current')
+        self.assertEqual(self.installed.read_bytes(), binary.read_bytes())
+
+    def test_self_update_checksum_failure_preserves_executable(self):
+        self.checksum.write_text('0' * 64 + '\n')
+        result = self.update()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.installed.read_bytes(), binary.read_bytes())
+
+    def test_invalid_release_version_keeps_previous_binary(self):
+        before = self.installed.read_bytes()
+        result = self.install('2026.08.20.1/other')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(before, self.installed.read_bytes())
+
+    def test_non_arm_artifact_is_rejected(self):
+        self.artifact.write_text('#!/bin/sh\necho jbsync ' + self.version + '\n')
+        self.checksum.write_text(hashlib.sha256(self.artifact.read_bytes()).hexdigest() + '\n')
+        before = self.installed.read_bytes()
+        result = self.install()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(before, self.installed.read_bytes())
+
     def install(self, version=None):
         env = dict(os.environ, JBSYNC_RELEASE_BASE_URL=(self.path / 'releases').as_uri())
         env.pop('JBSYNC_INSTALLER_SOURCE_ONLY', None)
-        env.pop('RUST_CLI_TOOLKIT_INSTALLER_SOURCE_ONLY', None)
         return subprocess.run(['sh', str(root / 'scripts/install.sh'), '--version', version or self.version,
                                '--install-dir', str(self.destination)], env=env, capture_output=True, text=True)
 

@@ -1,4 +1,4 @@
-//! Zig rewrite library. Allocations belong to the caller's arena.
+//! jbsync library. Allocations belong to the caller's arena.
 comptime {
     const target = @import("builtin").target;
     if (target.os.tag != .macos or target.cpu.arch != .aarch64)

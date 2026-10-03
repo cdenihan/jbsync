@@ -39,27 +39,36 @@ pub const Engine = struct {
     policy: config.Sync,
     git: Git,
     ides: []settings.Ide,
+    pub fn loadLocal(fs: files.Fs, raw: []const u8, env: *const std.process.Environ.Map, fallback: ?[]const u8) !config.Local {
+        return config.Local.load(fs.allocator, raw, fallback) catch |err| switch (err) {
+            error.MachineIdNotConfigured => config.Local.load(fs.allocator, raw, try hostname(fs, env)),
+            else => return err,
+        };
+    }
     pub fn open(fs: files.Fs, app: []const u8, env: *const std.process.Environ.Map) !Engine {
-        const local = try config.Local.load(fs.allocator, (try fs.read(try fs.join(&.{ app, "config.toml" }))) orelse "", try hostname(fs, env));
+        const local = try loadLocal(fs, (try fs.read(try fs.join(&.{ app, "config.toml" }))) orelse "", env, null);
         const store = local.store orelse try fs.join(&.{ app, "data" });
         const machine_file = try std.fmt.allocPrint(fs.allocator, "{s}.toml", .{local.machine});
         const policy = try config.Sync.load(fs.allocator, (try fs.read(try fs.join(&.{ store, "sync.toml" }))) orelse "", (try fs.read(try fs.join(&.{ store, "machines", machine_file }))) orelse "");
-        const home = env.get("HOME") orelse env.get("USERPROFILE") orelse return error.HomeNotFound;
+        const home = env.get("HOME") orelse return error.HomeNotFound;
         const default_root = try fs.join(&.{ home, "Library/Application Support/JetBrains" });
         const root = if (local.root) |r| if (std.mem.eql(u8, r, "auto")) default_root else r else default_root;
         const installations = if (local.install_roots.len != 0) local.install_roots else &[_][]const u8{ "/Applications", try fs.join(&.{ home, "Applications" }), try fs.join(&.{ home, "Library/Application Support/JetBrains/Toolbox/apps" }) };
         return .{ .fs = fs, .app = app, .local = local, .policy = policy, .git = .{ .fs = fs, .root = store, .remote = local.remote, .branch = local.branch }, .ides = try settings.discover(fs, root, &.{"*"}, installations) };
     }
     pub fn lock(self: Engine) !std.Io.File {
-        try self.fs.mkdir(self.app);
+        return lockAt(self.fs, self.app);
+    }
+    pub fn lockAt(fs: files.Fs, app: []const u8) !std.Io.File {
+        try fs.mkdir(app);
         {
-            const dir = try std.Io.Dir.cwd().openDir(self.fs.io, self.app, .{});
-            defer dir.close(self.fs.io);
-            try dir.setPermissions(self.fs.io, .fromMode(0o700));
+            const dir = try std.Io.Dir.cwd().openDir(fs.io, app, .{});
+            defer dir.close(fs.io);
+            try dir.setPermissions(fs.io, .fromMode(0o700));
         }
-        const f = try std.Io.Dir.cwd().createFile(self.fs.io, try self.fs.join(&.{ self.app, "sync.lock" }), .{ .truncate = false });
-        errdefer f.close(self.fs.io);
-        if (!try f.tryLock(self.fs.io, .exclusive)) return error.AnotherSyncInProgress;
+        const f = try std.Io.Dir.cwd().createFile(fs.io, try fs.join(&.{ app, "sync.lock" }), .{ .truncate = false });
+        errdefer f.close(fs.io);
+        if (!try f.tryLock(fs.io, .exclusive)) return error.AnotherSyncInProgress;
         return f;
     }
     fn loadPolicy(self: *Engine, staging: *files.Staging) !void {
@@ -331,7 +340,7 @@ fn contains(list: []const []const u8, text: []const u8) bool {
 // Zig has no portable hostname I/O operation yet. Use the OS hostname utility
 // without a shell, only for identity (Git remains the transport dependency).
 pub fn hostname(fs: files.Fs, env: *const std.process.Environ.Map) ![]const u8 {
-    if (env.get("HOSTNAME") orelse env.get("COMPUTERNAME")) |name| return name;
+    if (env.get("HOSTNAME")) |name| return name;
     const result = try std.process.run(fs.allocator, fs.io, .{ .argv = &.{"hostname"}, .stdout_limit = .limited(4096), .stderr_limit = .limited(4096) });
     const name = std.mem.trim(u8, result.stdout, " \r\n\t");
     if (result.term != .exited or result.term.exited != 0 or name.len == 0) return error.HostnameUnavailable;

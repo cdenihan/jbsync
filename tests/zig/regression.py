@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deterministic Rust oracle comparison; never reads or modifies real IDEs."""
+"""Deterministic regression against frozen, verified legacy behavior."""
 import argparse
 import itertools
 import json
@@ -76,26 +76,25 @@ def cases():
 def main():
     p = argparse.ArgumentParser()
     p.add_argument('zig', type=Path)
-    p.add_argument('rust', type=Path)
     args = p.parse_args()
     inputs = cases()
     with tempfile.TemporaryDirectory(prefix='jbsync-oracle-') as temp:
         fixture = Path(temp) / 'cases.json'
         fixture.write_text(json.dumps(inputs))
-        outputs = [json.loads(subprocess.check_output([str(binary.resolve()), str(fixture)], text=True)) for binary in (args.zig, args.rust)]
+        outputs = [json.loads(subprocess.check_output([str(args.zig.resolve()), str(fixture)], text=True)), json.loads(Path(__file__).with_name('reference.json').read_text())['expected']]
     if any(len(output) != len(inputs) for output in outputs):
         raise AssertionError('oracle omitted results')
     failures = []
-    for i, (c, zig, rust) in enumerate(zip(inputs, *outputs)):
+    for i, (c, zig, expected) in enumerate(zip(inputs, *outputs)):
         if c['op'] != 'glob':
-            for out in (zig, rust):
+            for out in (zig,):
                 if 'content' in out:
                     out['content'] = semantic(out['content'])
-        if zig != rust:
-            failures.append((i, c, zig, rust))
+        if json.loads(json.dumps(zig)) != expected:
+            failures.append((i, c, zig, expected))
     for failure in failures[:8]:
         print(json.dumps(failure, ensure_ascii=False))
-    print(f'{len(inputs)} Rust/Zig comparisons: {len(failures)} differences')
+    print(f'{len(inputs)} legacy regression cases: {len(failures)} differences')
     if failures:
         raise SystemExit(1)
 

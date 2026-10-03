@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Real CLI/Git fixtures. Runs against either implementation for parity checks."""
+"""Real CLI/Git fixtures. Never modifies real IDE installations."""
 import argparse
 import hashlib
 import json
@@ -13,13 +13,12 @@ import zipfile
 
 PARSER = argparse.ArgumentParser()
 PARSER.add_argument('binary', type=Path)
-PARSER.add_argument('--rust-baseline', action='store_true')
 ARGS = PARSER.parse_args()
 BINARY = ARGS.binary.resolve()
 
 
 def git(*args):
-    return subprocess.run(['git', *map(str, args)], check=True, capture_output=True, text=True).stdout.strip()
+    return subprocess.run(['git', *map(str, args)], check=True, capture_output=True, text=True, env=dict(os.environ, GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL=os.devnull)).stdout.strip()
 
 
 class Machine:
@@ -61,7 +60,7 @@ class Machine:
         env = dict(os.environ, GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL=os.devnull)
         env.pop('JBSYNC_CONFIG_DIR', None)
         p = subprocess.run([str(BINARY), '--config-dir', str(self.app), *args], capture_output=True, text=True, env=env)
-        accepted = (expected, 2) if ARGS.rust_baseline and expected == 1 else (expected,)
+        accepted = (expected,)
         if p.returncode not in accepted:
             raise AssertionError(f'{args}: exit {p.returncode}\n{p.stdout}\n{p.stderr}')
         return p.stdout
@@ -120,7 +119,6 @@ class Integration(unittest.TestCase):
             self.assertEqual(m.value(m.names[0], 'wrap'), 'false')
         git('--git-dir', self.remote, 'fsck', '--full')
 
-    @unittest.skipIf(ARGS.rust_baseline, 'Rust engine currently writes with --prefer neither; Zig intentionally aborts')
     def test_conflict_policies_and_neither_does_not_write(self):
         m = self.machine()
         for name in m.names:
@@ -213,7 +211,6 @@ class Integration(unittest.TestCase):
         m.sync()
         self.assertIn('UseZGC', (m.root / m.names[1] / 'pycharm.vmoptions').read_text())
 
-    @unittest.skipIf(ARGS.rust_baseline, 'Rust currently retains deleted shared files on the other machine')
     def test_remote_deletion_preserves_private_content(self):
         a = self.machine(names=('IntelliJIdea2026.2',))
         a.option(a.names[0], tabs='8')
@@ -225,7 +222,6 @@ class Integration(unittest.TestCase):
         b.sync()
         self.assertIsNone(b.value(b.names[0]))
 
-    @unittest.skipIf(os.name == 'nt', 'POSIX advisory lock fixture')
     def test_concurrent_run_is_rejected(self):
         import fcntl
         m = self.machine()
@@ -234,8 +230,32 @@ class Integration(unittest.TestCase):
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             m.sync(expected=1)
 
-    @unittest.skipIf(os.name == 'nt', 'Windows symlink creation needs extra privileges')
-    @unittest.skipIf(ARGS.rust_baseline, 'Rust skips symlink files rather than rejecting the sync')
+    def test_init_lock_precedes_config_mutation(self):
+        import fcntl
+        m = self.machine()
+        m.sync()
+        before = (m.app / 'config.toml').read_bytes()
+        with (m.app / 'sync.lock').open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            m.run('init', '--machine', 'changed', expected=1)
+        self.assertEqual(before, (m.app / 'config.toml').read_bytes())
+
+    def test_metadata_selects_arm_launcher(self):
+        m = self.machine(names=('IntelliJIdea2026.2',))
+        wrong = m.install / 'intel-launcher'
+        launcher = m.install / 'arm-launcher'
+        marker = self.path / 'arm-installed'
+        wrong.write_text('#!/bin/sh\nexit 99\n')
+        launcher.write_text('#!/bin/sh\ntouch ' + str(marker) + '\n')
+        for p in (wrong, launcher): p.chmod(0o700)
+        (m.install / 'product-info.json').write_text(json.dumps(dict(
+            dataDirectoryName=m.names[0], buildNumber='262.3',
+            launch=[dict(os='macOS', arch='amd64', launcherPath=wrong.name),
+                    dict(os='macOS', arch='aarch64', launcherPath=launcher.name)])))
+        self.seed_plugins(m, [dict(id='example', source_products=['IntelliJIdea'])])
+        m.run('sync')
+        self.assertTrue(marker.exists())
+
     def test_incoming_settings_never_follow_a_symlink(self):
         m = self.machine()
         m.option(m.names[0], tabs='8')
@@ -288,7 +308,6 @@ class Integration(unittest.TestCase):
         self.assertEqual(target.stat().st_mode & 0o777, 0o640)
         self.assertEqual(m.value(m.names[1]), '8')
 
-    @unittest.skipIf(ARGS.rust_baseline, 'Rust second-resolution backup folders coalesce rapid syncs')
     def test_backup_retention_and_original_bytes(self):
         m = self.machine()
         for name in m.names:
@@ -363,7 +382,6 @@ class Integration(unittest.TestCase):
         self.assertIn('install z-provider', out)
         self.assertIn('install a-dependent', out)
 
-    @unittest.skipIf(ARGS.rust_baseline, 'Rust loads remote policy on the next sync')
     def test_remote_policy_applies_in_same_sync(self):
         a = self.machine(names=('IntelliJIdea2026.2',))
         a.option(a.names[0], tabs='8')
@@ -374,7 +392,6 @@ class Integration(unittest.TestCase):
         b.sync()
         self.assertIsNone(b.value(b.names[0]))
 
-    @unittest.skipIf(ARGS.rust_baseline, 'Rust collapses repeated IntelliLang projection addresses during edits')
     def test_real_xml_corpus_converges_without_loss(self):
         m = self.machine()
         m.sync()
@@ -398,7 +415,6 @@ class Integration(unittest.TestCase):
         m.sync()
         self.assertEqual(tree(ET.parse(path).getroot()), tree(ET.parse(m.root / m.names[1] / 'options/IntelliLang.xml').getroot()))
 
-    @unittest.skipIf(ARGS.rust_baseline, 'Rust currently suppresses failed fetches')
     def test_failed_fetch_leaves_settings_untouched(self):
         m = self.machine()
         m.option(m.names[0])
@@ -428,7 +444,6 @@ class Integration(unittest.TestCase):
         self.assertFalse((m.app / 'data/shared/options/IntelliLang.xml').exists())
         self.assertTrue(list((m.app / 'data/defaults').glob('*.toml')))
 
-    @unittest.skipIf(ARGS.rust_baseline, 'Zig refuses ambiguous whole-file replacement that would discard private settings')
     def test_ambiguous_xml_with_private_values_refuses_destructive_write(self):
         m = self.machine()
         m.sync()
@@ -444,7 +459,6 @@ class Integration(unittest.TestCase):
         m.sync(expected=1)
         self.assertEqual(before, m.snapshot())
 
-    @unittest.skipIf(ARGS.rust_baseline, 'Rust omits the selected global color scheme from its leaf projection')
     def test_color_scheme_selection_conflicts_as_one_value(self):
         m = self.machine()
         def scheme(value):

@@ -23,6 +23,11 @@ replicate: they ride along with the settings.
 
 ---
 
+Configuration accepts UTF-8 TOML tables, arrays of tables, basic/literal strings
+(including multiline strings), booleans, integers, arrays and inline tables.
+Floating-point values and date/time literals are not configuration types and
+are rejected explicitly. Keys with the wrong type fail before sync writes.
+
 ## `~/.jbsync/config.toml`
 
 Machine-local. Never synced, because it describes this machine.
@@ -31,8 +36,7 @@ Machine-local. Never synced, because it describes this machine.
 # Complete example. Every value shown is the default unless noted.
 
 [repo]
-# Which backend implementation to use. Only "git" is implemented today;
-# see docs/how-it-works.md for the contract a new one must meet.
+# Transport implementation. Only "git" is supported.
 backend = "git"
 
 # Where to publish. Unset means the store never leaves this machine.
