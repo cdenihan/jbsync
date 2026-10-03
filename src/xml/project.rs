@@ -135,7 +135,7 @@ fn strip_wrapper(segment: &str, tag: &str, attribute: &str) -> Option<String> {
 /// `donor` does not actually contain the path, which would leave the target in
 /// a half-built state.
 pub fn set_leaf(target: &mut Element, donor: &Element, path: &str, value: &str) -> bool {
-    let mut segments: Vec<&str> = path.split('/').collect();
+    let mut segments = address_segments(path);
     let Some(leaf) = segments.pop() else {
         return false;
     };
@@ -200,7 +200,7 @@ pub fn graft(target: &mut Element, donor: &Element) {
 /// Removes the leaf at `path`, then drops any ancestor left with nothing to
 /// serialize.
 pub fn remove_leaf(target: &mut Element, path: &str) {
-    let mut segments: Vec<&str> = path.split('/').collect();
+    let mut segments = address_segments(path);
     let Some(leaf) = segments.pop() else {
         return;
     };
@@ -218,6 +218,35 @@ pub fn remove_leaf(target: &mut Element, path: &str) {
         cursor.attributes.remove(attribute);
     }
     prune_empty(target);
+}
+
+/// Splits an address without mistaking separators inside a key value for path
+/// separators. Rider-backed settings use names such as
+/// `option[name=/Default/PatternsAndTemplates/...]/@value`; a plain `split('/')`
+/// cannot navigate those leaves and turns every attempted write-back into a
+/// no-op.
+fn address_segments(path: &str) -> Vec<&str> {
+    let mut segments = Vec::new();
+    let mut start = 0;
+    let mut inside_key = false;
+    for (index, character) in path.char_indices() {
+        match character {
+            '[' if !inside_key => inside_key = true,
+            ']' if inside_key => {
+                let remainder = &path[index + character.len_utf8()..];
+                if remainder.is_empty() || remainder.starts_with('/') {
+                    inside_key = false;
+                }
+            }
+            '/' if !inside_key => {
+                segments.push(&path[start..index]);
+                start = index + character.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    segments.push(&path[start..]);
+    segments
 }
 
 /// Drops elements that no longer carry any value. A parent is only removed
@@ -371,6 +400,35 @@ mod tests {
                 .any(|path| path.contains("GeneralSettings"))
         );
         assert!(flattened.keys().any(|path| path.contains("Registry")));
+    }
+
+    #[test]
+    fn leaf_operations_handle_slashes_inside_key_attributes() {
+        let donor = parse(
+            r#"<application>
+                 <component name="BackendCodeEditorApplicationSettings">
+                   <option name="/Default/PatternsAndTemplates/LiveTemplates/Template/=abc/@KeyIndexDefined" type="bool" value="true" />
+                 </component>
+               </application>"#,
+        )
+        .unwrap();
+        let path = project(&donor)
+            .into_keys()
+            .find(|path| path.ends_with("/@value"))
+            .expect("the option value is projected");
+
+        let mut target = parse("<application />").unwrap();
+        assert!(set_leaf(&mut target, &donor, &path, "false"));
+        assert_eq!(
+            project(&target).get(&path).map(String::as_str),
+            Some("false")
+        );
+
+        remove_leaf(&mut target, &path);
+        assert!(
+            !project(&target).contains_key(&path),
+            "the addressed value should actually be removed"
+        );
     }
 
     /// The failure a flattened replay would have: this element carries no leaf
