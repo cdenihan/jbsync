@@ -137,6 +137,11 @@ pub fn product(name: []const u8) []const u8 {
     return if (end == 0) name else name[0..end];
 }
 pub fn discover(fs: files.Fs, root: []const u8, patterns: []const []const u8, installations: []const []const u8) ![]Ide {
+    const dir = std.Io.Dir.cwd().openDir(fs.io, root, .{ .iterate = true }) catch |err| switch (err) {
+        error.FileNotFound => return &.{},
+        else => return err,
+    };
+    defer dir.close(fs.io);
     var metadata: std.StringHashMapUnmanaged(Metadata) = .empty;
     for (installations) |installation| {
         const candidates = if (std.mem.endsWith(u8, installation, "product-info.json")) &[_][]const u8{""} else try fs.list(installation);
@@ -167,11 +172,6 @@ pub fn discover(fs: files.Fs, root: []const u8, patterns: []const []const u8, in
         }
     }
     var result: std.ArrayList(Ide) = .empty;
-    const dir = std.Io.Dir.cwd().openDir(fs.io, root, .{ .iterate = true }) catch |err| switch (err) {
-        error.FileNotFound => return &.{},
-        else => return err,
-    };
-    defer dir.close(fs.io);
     var it = dir.iterate();
     while (try it.next(fs.io)) |entry| {
         if (entry.kind != .directory or !any(patterns, entry.name)) continue;
@@ -354,4 +354,18 @@ test "legacy collapsed defaults cannot remove ambiguous XML values" {
     try std.testing.expectEqual(@as(usize, 2), root.children.items[0].children.items.len);
     try std.testing.expectEqualStrings("one", root.children.items[0].children.items[0].attrs.get("value").?);
     try std.testing.expectEqualStrings("two", root.children.items[0].children.items[1].attrs.get("value").?);
+}
+
+test "missing settings root returns before scanning unrelated applications" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+    const root = try temp.dir.realPathFileAlloc(std.testing.io, ".", a);
+    const fs: files.Fs = .{ .allocator = a, .io = std.testing.io };
+    const metadata = try fs.join(&.{ root, "product-info.json" });
+    try fs.write(metadata, "not valid JSON");
+    const missing = try fs.join(&.{ root, "missing-JetBrains" });
+    try std.testing.expectEqual(@as(usize, 0), (try discover(fs, missing, &.{"*"}, &.{metadata})).len);
 }

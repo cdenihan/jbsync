@@ -89,7 +89,8 @@ never point at the user's actual JetBrains settings or call real IDE launchers.
   runs are retained. The application directory is private. Staged disk reads and directory lists are
   cached per sync; no-op writes are dropped. Before committing, every planned
   destination is rechecked for symlinks and concurrent edits. Git internals and
-  excluded IDE caches are skipped during traversal.
+  excluded IDE caches are skipped during traversal. Discovery returns before
+  scanning applications when the JetBrains settings root does not exist.
 - `git.zig` reconciles file trees structurally before recording the remote as
   an `ours` merge parent. It distinguishes an empty remote from fetch failures,
   retries publishing even when no new commit is needed, and preserves binary
@@ -157,10 +158,14 @@ integrity, then reads the resulting settings with Rust again.
 
 The benchmark creates two disposable IDEs with 200 settings files, 4,000 leaves
 and 2,000 excluded cache files, then times five settled syncs. Local ReleaseSafe
-medians were 60.2 ms after optimization, 70.5 ms before, and 67.3 ms for Rust
-release (about 15% faster than the original Zig version). These local results
+medians across two runs were 60.2–61.7 ms after optimization, 69.8–70.5 ms
+before, and 65.0–67.3 ms for Rust release (about 12–15% faster than the original
+Zig version). These local results
 include Git/process overhead, are workload-specific and are not CI thresholds.
-No claim is made about Marketplace performance or live IDE behavior.
+A read-only default discovery probe on this Mac (no JetBrains profiles)
+initially spent 6.26 seconds scanning applications; returning early for an absent
+settings root reduced the same probe to 0.07 seconds. No claim is made about Marketplace performance
+or live IDE behavior.
 
 ## Remaining parity and release work
 
