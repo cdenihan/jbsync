@@ -3,7 +3,7 @@ name: Zig rewrite experiment
 on:
   pull_request:
   push:
-    branches: [main, 'codex/zig-0.17-rewrite']
+    branches: [main]
 
 permissions:
   contents: read
