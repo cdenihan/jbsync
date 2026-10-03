@@ -30,9 +30,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: zig fmt --check build.zig build.zig.zon src
-      - run: zig build test --summary all -Doptimize=${{ matrix.mode }}
-      - run: zig build validation -Doptimize=${{ matrix.mode }}
-      - run: zig build -Doptimize=${{ matrix.mode }}
+      - run: zig build test --summary all -Dtarget=aarch64-macos -Doptimize=${{ matrix.mode }}
+      - run: zig build validation -Dtarget=aarch64-macos -Doptimize=${{ matrix.mode }}
+      - run: zig build -Dtarget=aarch64-macos -Doptimize=${{ matrix.mode }}
       - run: python3 tests/zig/integration.py zig-out/bin/jbsync
       - run: cargo build --locked --example validation_oracle --bin jbsync
       - run: python3 tests/zig/differential.py zig-out/bin/jbsync-validation target/debug/examples/validation_oracle

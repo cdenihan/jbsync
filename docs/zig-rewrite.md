@@ -43,7 +43,8 @@ python3 tests/zig/installer.py zig-out/bin/jbsync
 ```
 
 `.github/workflows/zig.yml` runs the same validation on Apple Silicon macOS
-in Debug, ReleaseSafe and ReleaseFast modes. It uploads each experimental
+in Debug, ReleaseSafe and ReleaseFast modes, targeting generic `aarch64-macos`
+rather than the runner's native CPU. It uploads each experimental
 binary. The Rust workflow runs its complete original suite, formatting, Clippy
 and the shared CLI scenarios. No Intel Mac, Linux or Windows artifacts are built.
 The previous Windows failure was CRLF checkout formatting; `.gitattributes`
