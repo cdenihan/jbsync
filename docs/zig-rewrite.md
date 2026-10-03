@@ -122,7 +122,7 @@ The CLI suite covers:
 - deletion propagation, lock contention, symlink rejection, invalid config,
   command-specific flags, and builtin sync switches.
 
-The shared CLI suite has 29 scenarios, including rapid backup retention,
+The shared CLI suite has 30 scenarios, including rapid backup retention,
 permission preservation, real XML corpus convergence and subsequent edits,
 release version output, plugin launchers simulated with a local executable, capability/bundled decisions,
 managed plugin dependencies, failed fetches, selectors immediate remote policy, ambiguous factory files and safe refusal of ambiguous
@@ -139,12 +139,14 @@ preflight checks, parser depth limits and malformed XML.
 
 The fresh Rust baseline passed its 143 active tests (one optional live-corpus
 test is ignored). The shared CLI runner's `--rust-baseline` mode exercises 21
-matching scenarios and explicitly skips eight known differences: Rust writes
+matching scenarios and explicitly skips nine known differences: Rust writes
 under `--prefer neither`, coalesces rapid backups by second, suppresses failed
 fetches, skips symlinks rather than rejecting the sync, loses edits to repeated
 IntelliLang addresses, retains a deleted shared file in the other machine, and
 applies incoming policy on the next run, and does not reject an ambiguous
-whole-file replacement that would discard private values. Zig's stricter checks remain enabled.
+whole-file replacement that would discard private values. Rust also omits
+the global color scheme selection; Zig treats its name as one setting so
+concurrent theme choices conflict instead of producing duplicate selections. Zig's stricter checks remain enabled.
 Argument errors use exit status 2 in Rust and 1 in Zig.
 Four installer scenarios exercise the real ARM binary using a local release
 mirror: verified installation, corrupt/malformed checksums and a wrong version.

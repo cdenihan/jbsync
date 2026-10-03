@@ -444,6 +444,23 @@ class Integration(unittest.TestCase):
         m.sync(expected=1)
         self.assertEqual(before, m.snapshot())
 
+    @unittest.skipIf(ARGS.rust_baseline, 'Rust omits the selected global color scheme from its leaf projection')
+    def test_color_scheme_selection_conflicts_as_one_value(self):
+        m = self.machine()
+        def scheme(value):
+            return '<application><component name="EditorColorsManager"><global_color_scheme name="' + value + '"/></component></application>'
+        for name in m.names:
+            m.write(name, 'options/colors.scheme.xml', scheme('Dark'))
+        m.sync()
+        m.write(m.names[0], 'options/colors.scheme.xml', scheme('Solarized'))
+        m.write(m.names[1], 'options/colors.scheme.xml', scheme('Blue'))
+        out = m.sync('--prefer', 'remote')
+        self.assertIn(': conflict ', out)
+        for name in m.names:
+            nodes = ET.parse(m.root / name / 'options/colors.scheme.xml').findall('./component/global_color_scheme')
+            self.assertEqual(len(nodes), 1)
+            self.assertEqual(nodes[0].attrib['name'], 'Solarized')
+
 
 if __name__ == '__main__':
     unittest.main(argv=[str(__file__)], verbosity=2)

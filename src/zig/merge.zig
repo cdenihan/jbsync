@@ -233,3 +233,19 @@ test "ambiguous documents preserve every repeated sibling" {
     try std.testing.expectEqualStrings(r, merged.content.?);
     try std.testing.expectEqual(@as(usize, 1), merged.incoming.items.len);
 }
+
+test "concurrent color scheme selections conflict and retain one choice" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const base = "<application><component name='EditorColorsManager'><global_color_scheme name='Dark'/></component></application>";
+    const local = "<application><component name='EditorColorsManager'><global_color_scheme name='Light'/></component></application>";
+    const remote = "<application><component name='EditorColorsManager'><global_color_scheme name='Solarized'/></component></application>";
+    for ([_]Policy{ .local, .remote, .neither }) |policy| {
+        const result = try file(a, base, local, remote, policy);
+        try std.testing.expectEqual(@as(usize, 1), result.conflicts.items.len);
+        const doc = try xml.parse(a, result.content.?);
+        try std.testing.expectEqual(@as(usize, 1), doc.children.items[0].children.items.len);
+        try std.testing.expectEqualStrings(if (policy == .remote) "Solarized" else "Light", doc.children.items[0].children.items[0].attrs.get("name").?);
+    }
+}

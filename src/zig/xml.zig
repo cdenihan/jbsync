@@ -270,7 +270,10 @@ fn addressValue(a: A, s: []const u8) A.Error![]const u8 {
 
 fn segment(a: A, parent: *const Node, index: usize) ![]const u8 {
     const n = parent.children.items[index];
-    if (n.key()) |k| return std.fmt.allocPrint(a, "{s}[{s}={s}]", .{ n.name, k, try addressValue(a, n.attrs.get(k).?) });
+    // This singleton's name selects a scheme; it is a value, not an ID.
+    if (!eq(u8, n.name, "global_color_scheme")) {
+        if (n.key()) |k| return std.fmt.allocPrint(a, "{s}[{s}={s}]", .{ n.name, k, try addressValue(a, n.attrs.get(k).?) });
+    }
     var counter: usize = 0;
     for (parent.children.items[0..index]) |previous| if (eq(u8, previous.name, n.name)) {
         counter += 1;
@@ -282,7 +285,7 @@ fn joined(a: A, prefix: []const u8, leaf: []const u8) ![]const u8 {
 }
 pub const Leaf = struct { path: []const u8, value: []const u8 };
 fn collect(a: A, n: *const Node, prefix: []const u8, out: *std.ArrayList(Leaf)) A.Error!void {
-    const key = n.key();
+    const key = if (eq(u8, n.name, "global_color_scheme")) null else n.key();
     var it = n.attrs.iterator();
     var payload = false;
     while (it.next()) |entry| {
@@ -393,10 +396,11 @@ test "projection addresses escape delimiters and preserve domain presence" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const n = try parse(a, "<application><component name='A/B'><option name='x[y]' value='3'/><global_color_scheme name='Dark'/></component></application>");
+    const n = try parse(a, "<application><component name='A/B'><option name='x[y]' value='3'/><global_color_scheme name='Dark'/><scope name='Named'/></component></application>");
     const view = try project(a, n);
     try std.testing.expectEqualStrings("3", view.get("component[name=A%2FB]/option[name=x%5By%5D]/@value").?);
-    try std.testing.expect(view.contains("component[name=A%2FB]/global_color_scheme[name=Dark]/#present"));
+    try std.testing.expectEqualStrings("Dark", view.get("component[name=A%2FB]/global_color_scheme#0/@name").?);
+    try std.testing.expect(view.contains("component[name=A%2FB]/scope[name=Named]/#present"));
 }
 
 test "bounded parser rejects malformed entities, controls, and deep trees" {
