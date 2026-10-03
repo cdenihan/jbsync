@@ -61,6 +61,6 @@ mod tests {
 
     #[test]
     fn install_roots_are_non_empty() {
-        assert!(!default_install_roots().is_empty());
+        assert_ne!(default_install_roots().len(), 0);
     }
 }

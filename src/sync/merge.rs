@@ -516,7 +516,7 @@ mod tests {
     fn identical_edits_on_both_sides_are_not_a_conflict() {
         let changed = BASE.replace(r#"value="4""#, r#"value="2""#);
         let merged = merge(BASE, &changed, &changed);
-        assert!(merged.conflicts.is_empty());
+        assert_eq!(merged.conflicts.len(), 0);
         assert!(merged.is_noop());
     }
 
@@ -558,7 +558,7 @@ mod tests {
         assert!(text.contains("-XX:+UseZGC"));
         assert!(text.contains("-Dfile.encoding=UTF-8"));
         assert!(text.contains("-Xmx4g"));
-        assert!(merged.conflicts.is_empty());
+        assert_eq!(merged.conflicts.len(), 0);
     }
 
     #[test]
