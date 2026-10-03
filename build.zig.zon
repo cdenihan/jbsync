@@ -1,6 +1,6 @@
 .{
     .name = .jbsync,
-    .version = "2026.8.20+1",
+    .version = "2026.10.3+2",
     .fingerprint = 0xf63083d48ef3c1dc, // Changing this has security and trust implications.
     .minimum_zig_version = "0.17.0",
     .dependencies = .{},
