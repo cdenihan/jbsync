@@ -31,12 +31,13 @@ and platform checks. The Rust tasks remain available.
 For direct Rust comparisons and a disposable benchmark:
 
 ```sh
-cargo build --locked --example validation_oracle
+cargo build --locked --example validation_oracle --bin jbsync
 zig build validation -Doptimize=ReleaseSafe
 python3 tests/zig/differential.py zig-out/bin/jbsync-validation target/debug/examples/validation_oracle
 cargo build --locked --release
 python3 tests/zig/integration.py target/release/jbsync --rust-baseline
 python3 tests/zig/benchmark.py zig-out/bin/jbsync target/release/jbsync
+python3 tests/zig/migration.py zig-out/bin/jbsync target/debug/jbsync
 sh tests/zig/platform.sh
 python3 tests/zig/installer.py zig-out/bin/jbsync
 ```
@@ -147,6 +148,9 @@ Argument errors use exit status 2 in Rust and 1 in Zig.
 Four installer scenarios exercise the real ARM binary using a local release
 mirror: verified installation, corrupt/malformed checksums and a wrong version.
 Failed validation preserves the previously installed executable.
+A migration scenario creates real Rust stores and baselines on two machines,
+upgrades them to Zig with disjoint edits, verifies settled snapshots and Git
+integrity, then reads the resulting settings with Rust again.
 
 The benchmark creates two disposable IDEs with 200 settings files, 4,000 leaves
 and 2,000 excluded cache files, then times five settled syncs. Local ReleaseSafe
