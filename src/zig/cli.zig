@@ -65,7 +65,7 @@ pub fn run(a: A, io: std.Io, env: *const std.process.Environ.Map, argv: []const 
     const args = try parseArgs(a, argv);
     const words = args.words.items;
     if (args.version) {
-        try out.print("jbsync {s} (Zig 0.17.0 experiment)\n", .{@import("build_options").version});
+        try out.print("jbsync {s}\n", .{@import("build_options").version});
         return;
     }
     if (args.help or words.len == 0) {

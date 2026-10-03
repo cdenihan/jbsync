@@ -262,8 +262,13 @@ pub fn view(a: A, relative: []const u8, raw: ?[]const u8, c: config.Sync, defaul
     prune(relative, n, null, c, &removed);
     if (c.use_defaults) {
         const d: config.Value = defaults.get("files") orelse .{ .table = .empty };
-        if (d.get(relative)) |values| {
-            const projection = try xml.project(a, n);
+        if (d.get(relative)) |values| defaults_block: {
+            const projection = xml.project(a, n) catch |err| switch (err) {
+                // Legacy Rust defaults may contain collapsed duplicate keys.
+                // Do not suppress values that cannot be addressed uniquely.
+                error.AmbiguousXmlAddress => break :defaults_block,
+                else => return err,
+            };
             var it = projection.iterator();
             while (it.next()) |entry| if (values.get(entry.key_ptr.*)) |v| {
                 if (eq(u8, try v.str(), entry.value_ptr.*)) {
@@ -335,4 +340,18 @@ test "numeric build order and brace globs" {
     try std.testing.expect(!newer("262.9", "262.10"));
     try std.testing.expect(glob("options/{editor,laf}.xml", "options/laf.xml"));
     try std.testing.expect(glob("{CLion,PyCharm}20??.*", "CLion2026.2"));
+}
+
+test "legacy collapsed defaults cannot remove ambiguous XML values" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const defaults = try config.parse(a, "[files.\"options/ambiguous.xml\"]\n\"component[name=Injection]/injection[language=RegExp]/@value\"='one'\n");
+    const raw = "<application><component name='Injection'><injection language='RegExp' value='one'/><injection language='RegExp' value='two'/></component></application>";
+    const pruned = try view(a, "options/ambiguous.xml", raw, .{}, defaults);
+    try std.testing.expectEqual(@as(usize, 0), pruned.removed);
+    const root = try xml.parse(a, pruned.content.?);
+    try std.testing.expectEqual(@as(usize, 2), root.children.items[0].children.items.len);
+    try std.testing.expectEqualStrings("one", root.children.items[0].children.items[0].attrs.get("value").?);
+    try std.testing.expectEqualStrings("two", root.children.items[0].children.items[1].attrs.get("value").?);
 }

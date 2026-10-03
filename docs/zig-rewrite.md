@@ -38,6 +38,7 @@ cargo build --locked --release
 python3 tests/zig/integration.py target/release/jbsync --rust-baseline
 python3 tests/zig/benchmark.py zig-out/bin/jbsync target/release/jbsync
 sh tests/zig/platform.sh
+python3 tests/zig/installer.py zig-out/bin/jbsync
 ```
 
 `.github/workflows/zig.yml` runs the same validation on Apple Silicon macOS
@@ -119,10 +120,12 @@ The CLI suite covers:
 - deletion propagation, lock contention, symlink rejection, invalid config,
   command-specific flags, and builtin sync switches.
 
-The shared CLI suite has 26 scenarios, including rapid backup retention,
+The shared CLI suite has 29 scenarios, including rapid backup retention,
 permission preservation, real XML corpus convergence and subsequent edits,
-plugin launchers simulated with a local executable, capability/bundled decisions,
-managed plugin dependencies, failed fetches, selectors and immediate remote policy.
+release version output, plugin launchers simulated with a local executable, capability/bundled decisions,
+managed plugin dependencies, failed fetches, selectors immediate remote policy, ambiguous factory files and safe refusal of ambiguous
+writeback over private content. Repeated-key factory XML is excluded from
+default capture; legacy collapsed default addresses cannot suppress its values.
 
 The differential suite makes **2,688 deterministic comparisons** with a freshly
 built Rust oracle: all 14 real XML fixtures, Unicode/entities/attribute whitespace,
@@ -133,13 +136,17 @@ The native suite also injects allocation failures and tests concurrent-edit
 preflight checks, parser depth limits and malformed XML.
 
 The fresh Rust baseline passed its 143 active tests (one optional live-corpus
-test is ignored). The shared CLI runner's `--rust-baseline` mode exercises 19
-matching scenarios and explicitly skips seven known differences: Rust writes
+test is ignored). The shared CLI runner's `--rust-baseline` mode exercises 21
+matching scenarios and explicitly skips eight known differences: Rust writes
 under `--prefer neither`, coalesces rapid backups by second, suppresses failed
 fetches, skips symlinks rather than rejecting the sync, loses edits to repeated
 IntelliLang addresses, retains a deleted shared file in the other machine, and
-applies incoming policy on the next run. Zig's stricter checks remain enabled.
+applies incoming policy on the next run, and does not reject an ambiguous
+whole-file replacement that would discard private values. Zig's stricter checks remain enabled.
 Argument errors use exit status 2 in Rust and 1 in Zig.
+Four installer scenarios exercise the real ARM binary using a local release
+mirror: verified installation, corrupt/malformed checksums and a wrong version.
+Failed validation preserves the previously installed executable.
 
 The benchmark creates two disposable IDEs with 200 settings files, 4,000 leaves
 and 2,000 excluded cache files, then times five settled syncs. Local ReleaseSafe

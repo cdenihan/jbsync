@@ -25,6 +25,7 @@ jobs:
       - run: cargo test --locked --all-targets
       - run: cargo build --locked --release
       - run: python3 tests/zig/integration.py target/release/jbsync --rust-baseline
+      - run: python3 tests/zig/installer.py target/release/jbsync
   security:
     name: RustSec audit
     runs-on: macos-15

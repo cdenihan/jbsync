@@ -217,7 +217,11 @@ pub const Engine = struct {
                 error.OutOfMemory => return err,
                 else => continue,
             };
-            const projection = try xml.project(a, n);
+            const projection = xml.project(a, n) catch |err| switch (err) {
+                // A positional default cannot safely describe repeated keys.
+                error.AmbiguousXmlAddress => continue,
+                else => return err,
+            };
             if (projection.count() == 0) continue;
             var table: config.Table = .empty;
             var it = projection.iterator();

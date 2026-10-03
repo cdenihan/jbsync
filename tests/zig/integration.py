@@ -266,6 +266,11 @@ class Integration(unittest.TestCase):
         self.assertIn('false', (m.root / m.names[0] / 'options/settingsSync.xml').read_text())
         m.run('sync', '--dr-run', expected=1)
 
+    def test_version_matches_release_metadata(self):
+        m = self.machine()
+        version = (Path(__file__).resolve().parents[2] / 'VERSION').read_text().strip()
+        self.assertEqual(m.run('--version').strip(), 'jbsync ' + version)
+
     def seed_plugins(self, m, plugins, policy=''):
         m.sync()
         (m.app / 'data/plugins.json').write_text(json.dumps(dict(version=1, plugins=plugins)))
@@ -411,6 +416,33 @@ class Integration(unittest.TestCase):
         self.assertIsNone(m.value(m.names[1]))
         m.sync()
         self.assertEqual(m.value(m.names[1]), '8')
+
+    def test_unlaunched_ide_with_ambiguous_factory_xml(self):
+        m = self.machine(launched=False)
+        fixture = Path(__file__).resolve().parents[1] / 'corpus/options__IntelliLang.xml'
+        m.write(m.names[0], 'options/IntelliLang.xml', fixture.read_text())
+        m.option(m.names[0])
+        before = (m.root / m.names[0] / 'options/IntelliLang.xml').read_bytes()
+        m.sync()
+        self.assertEqual(before, (m.root / m.names[0] / 'options/IntelliLang.xml').read_bytes())
+        self.assertFalse((m.app / 'data/shared/options/IntelliLang.xml').exists())
+        self.assertTrue(list((m.app / 'data/defaults').glob('*.toml')))
+
+    @unittest.skipIf(ARGS.rust_baseline, 'Zig refuses ambiguous whole-file replacement that would discard private settings')
+    def test_ambiguous_xml_with_private_values_refuses_destructive_write(self):
+        m = self.machine()
+        m.sync()
+        (m.app / 'data/sync.toml').write_text(
+            "[jetbrains]\nexplicit_include=['options/ambiguous.xml']\n"
+            "[[xml.omit]]\nfile='options/ambiguous.xml'\ncomponent='Private'\noption='secret'\n")
+        raw = '<application><component name="Injection"><injection language="RegExp" value="one"/><injection language="RegExp" value="two"/></component><component name="Private"><option name="secret" value="private"/></component></application>'
+        for name in m.names:
+            m.write(name, 'options/ambiguous.xml', raw)
+        m.sync()
+        m.write(m.names[0], 'options/ambiguous.xml', raw.replace('value="one"', 'value="changed"'))
+        before = m.snapshot()
+        m.sync(expected=1)
+        self.assertEqual(before, m.snapshot())
 
 
 if __name__ == '__main__':
