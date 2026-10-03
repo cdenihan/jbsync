@@ -1,0 +1,53 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M41V16FH576JBRKJX2GE913X",
+  "strategy": "manual-commit",
+  "branch": "codex/zig-0.17-rewrite",
+  "checkpoints_count": 1,
+  "files_touched": [
+    ".gitattributes",
+    ".github/workflows/ci.yml",
+    ".github/workflows/publish-release.yml",
+    ".github/workflows/zig.yml",
+    "README.md",
+    "build.zig",
+    "docs/configuration.md",
+    "docs/getting-started.md",
+    "docs/how-it-works.md",
+    "docs/zig-rewrite.md",
+    "examples/validation_oracle.rs",
+    "mise.toml",
+    "scripts/install.sh",
+    "src/ide.rs",
+    "src/lib.rs",
+    "src/platform.rs",
+    "src/root.zig",
+    "src/validation.zig",
+    "src/zig/engine.zig",
+    "src/zig/files.zig",
+    "src/zig/merge.zig",
+    "src/zig/plugins.zig",
+    "src/zig/settings.zig",
+    "src/zig/xml.zig",
+    "tests/zig/benchmark.py",
+    "tests/zig/differential.py",
+    "tests/zig/integration.py",
+    "tests/zig/platform.sh"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 390093,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 12763776,
+    "output_tokens": 99406,
+    "api_call_count": 101
+  }
+}

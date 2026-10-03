@@ -1,0 +1,71 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M41V16FH576JBRKJX2GE913X",
+  "session_id": "01a10371-6d69-7ee3-87c4-79b07f14334b",
+  "strategy": "manual-commit",
+  "created_at": "2026-10-03T21:34:28.445552Z",
+  "branch": "codex/zig-0.17-rewrite",
+  "checkpoints_count": 1,
+  "files_touched": [
+    ".gitattributes",
+    ".github/workflows/ci.yml",
+    ".github/workflows/publish-release.yml",
+    ".github/workflows/zig.yml",
+    "README.md",
+    "build.zig",
+    "docs/configuration.md",
+    "docs/getting-started.md",
+    "docs/how-it-works.md",
+    "docs/zig-rewrite.md",
+    "examples/validation_oracle.rs",
+    "mise.toml",
+    "scripts/install.sh",
+    "src/ide.rs",
+    "src/lib.rs",
+    "src/platform.rs",
+    "src/root.zig",
+    "src/validation.zig",
+    "src/zig/engine.zig",
+    "src/zig/files.zig",
+    "src/zig/merge.zig",
+    "src/zig/plugins.zig",
+    "src/zig/settings.zig",
+    "src/zig/xml.zig",
+    "tests/zig/benchmark.py",
+    "tests/zig/differential.py",
+    "tests/zig/integration.py",
+    "tests/zig/platform.sh"
+  ],
+  "agent": "Codex",
+  "model": "gpt-6.1-sol",
+  "turn_id": "bad0836cc3ab",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 390093,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 12763776,
+    "output_tokens": 99406,
+    "api_call_count": 101
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-10-03T21:34:28.373044Z",
+    "agent_lines": 1184,
+    "agent_removed": 236,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 1184,
+    "total_lines_changed": 1420,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    }
+  ]
+}
