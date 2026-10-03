@@ -50,7 +50,12 @@ pub fn file(a: A, base_raw: ?[]const u8, local_raw: ?[]const u8, remote_raw: ?[]
                 error.OutOfMemory => return err,
                 else => null,
             } else null;
-            return documents(a, b, l.?, r.?, policy);
+            return documents(a, b, l.?, r.?, policy) catch |err| switch (err) {
+                // Repeated keyed siblings cannot be addressed safely. Preserve
+                // the complete file rather than silently collapsing leaves.
+                error.AmbiguousXmlAddress => whole(a, base, local, remote, policy),
+                else => return err,
+            };
         }
         if (std.unicode.utf8ValidateSlice(local.?) and std.unicode.utf8ValidateSlice(remote.?) and !std.mem.startsWith(u8, std.mem.trim(u8, local.?, " \r\n\t"), "<")) return mergeText(a, base, local.?, remote.?, policy);
     }
@@ -107,36 +112,59 @@ pub fn flagKey(line: []const u8) []const u8 {
     if (std.mem.indexOfScalar(u8, line, '=')) |i| return line[0..i];
     return std.mem.trimEnd(u8, line, "0123456789kKmMgG");
 }
-fn lines(a: A, raw: ?[]const u8) !xml.View {
-    var result: xml.View = .empty;
+fn lines(a: A, raw: ?[]const u8) ![][]const u8 {
+    var result: std.ArrayList([]const u8) = .empty;
     var it = std.mem.splitScalar(u8, raw orelse "", '\n');
     while (it.next()) |line| {
-        const trimmed = std.mem.trim(u8, line, " \t\r");
-        if (trimmed.len != 0) try result.put(a, flagKey(trimmed), trimmed);
+        const trimmed = std.mem.trimEnd(u8, line, " \t\r");
+        if (trimmed.len != 0) try result.append(a, trimmed);
     }
-    return result;
+    return result.toOwnedSlice(a);
+}
+fn lineSet(a: A, values: []const []const u8) !std.StringHashMapUnmanaged(void) {
+    var set: std.StringHashMapUnmanaged(void) = .empty;
+    for (values) |value| try set.put(a, value, {});
+    return set;
 }
 fn mergeText(a: A, base: ?[]const u8, local: []const u8, remote: []const u8, policy: Policy) !Result {
     const bv = try lines(a, base);
     const lv = try lines(a, local);
     const rv = try lines(a, remote);
+    const bs = try lineSet(a, bv);
+    const ls = try lineSet(a, lv);
+    const rs = try lineSet(a, rv);
+    // Retain order and repeated lines exactly as the Rust line-set merge does.
+    // Hash indexes avoid repeated linear scans through entire JVM option files.
+    var remote_added: std.StringHashMapUnmanaged([]const u8) = .empty;
+    for (rv) |v| if (!bs.contains(v) and !remote_added.contains(flagKey(v))) try remote_added.put(a, flagKey(v), v);
+    var local_keys: std.StringHashMapUnmanaged(void) = .empty;
     var out: std.Io.Writer.Allocating = .init(a);
     var result: Result = .{ .content = null };
-    for (try unionKeys(a, &.{ bv, lv, rv })) |path| {
-        const b = bv.get(path);
-        const l = lv.get(path);
-        const r = rv.get(path);
-        var value = l;
-        if (!files.equal(l, r)) {
-            const take_remote = if (files.equal(l, b)) true else if (files.equal(r, b)) false else blk: {
-                try result.conflicts.append(a, .{ .path = path, .local = l, .remote = r });
-                break :blk policy == .remote;
-            };
-            value = if (take_remote) r else l;
-            const change: Change = .{ .path = "", .before = if (take_remote) l else r, .after = value };
-            if (take_remote) try result.incoming.append(a, change) else try result.outgoing.append(a, change);
+    for (bv) |v| {
+        if (ls.contains(v) and rs.contains(v)) {
+            try out.writer.print("{s}\n", .{v});
+        } else {
+            const change: Change = .{ .path = "", .before = v, .after = null };
+            if (ls.contains(v)) try result.incoming.append(a, change) else try result.outgoing.append(a, change);
         }
-        if (value) |v| try out.writer.print("{s}\n", .{v});
+    }
+    for (lv) |v| {
+        if (bs.contains(v)) continue;
+        const key = flagKey(v);
+        try local_keys.put(a, key, {});
+        var value = v;
+        if (remote_added.get(key)) |r| {
+            if (!std.mem.eql(u8, v, r)) {
+                try result.conflicts.append(a, .{ .path = key, .local = v, .remote = r });
+                if (policy == .remote) value = r;
+            }
+        } else try result.outgoing.append(a, .{ .path = "", .before = null, .after = v });
+        try out.writer.print("{s}\n", .{value});
+    }
+    for (rv) |v| {
+        if (bs.contains(v) or local_keys.contains(flagKey(v))) continue;
+        try result.incoming.append(a, .{ .path = "", .before = null, .after = v });
+        try out.writer.print("{s}\n", .{v});
     }
     result.content = try out.toOwnedSlice();
     return result;
@@ -182,4 +210,26 @@ test "twelve ordered keyless children are grafted in document order" {
     for (n.children.items[0].children.items[0].children.items, 0..) |item, i| {
         try std.testing.expectEqualStrings(try std.fmt.allocPrint(a, "{d}", .{i}), item.attrs.get("value").?);
     }
+}
+
+fn allocationFailureScenario(allocator: A) !void {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    _ = try file(a, "<application><component name='Editor'><option name='x' value='0'/></component></application>", "<application><component name='Editor'><option name='x' value='1'/></component></application>", "<application><component name='Editor'><option name='y' value='2'/></component></application>", .remote);
+    _ = try file(a, "-Xmx4g\n", "-Xmx8g\n-XX:+UseZGC\n", "-Xmx16g\n", .local);
+}
+test "merge propagates allocator failure and releases its arena" {
+    try std.testing.checkAllAllocationFailures(std.testing.allocator, allocationFailureScenario, .{});
+}
+
+test "ambiguous documents preserve every repeated sibling" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const b = "<application><component name='Injection'><injection language='RegExp' value='one'/><injection language='RegExp' value='two'/></component></application>";
+    const r = "<application><component name='Injection'><injection language='RegExp' value='changed'/><injection language='RegExp' value='two'/></component></application>";
+    const merged = try file(a, b, b, r, .local);
+    try std.testing.expectEqualStrings(r, merged.content.?);
+    try std.testing.expectEqual(@as(usize, 1), merged.incoming.items.len);
 }

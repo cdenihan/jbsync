@@ -3,7 +3,9 @@
 This branch includes an experimental **Zig 0.17.0 rewrite**. Build and test it
 with `zig build` and `zig build test`; see [the experiment guide](docs/zig-rewrite.md)
 for CLI scenario tests, design choices, and remaining parity gaps. The Rust
-implementation and release pipeline remain available as the comparison baseline.
+implementation remains the comparison baseline and release implementation.
+This branch supports **Apple Silicon Macs only**; Intel Macs, Linux and Windows
+are unsupported.
 
 Settings and plugin sync for JetBrains IDEs, across every IDE on a machine and
 across every machine you use.
@@ -49,20 +51,14 @@ Committed: 3 file(s) at 8f21c0a4
 
 ## Install
 
-Linux or macOS:
+Apple Silicon macOS:
 
 ```console
 curl -fsSL https://github.com/cdenihan/jbsync/releases/latest/download/install.sh | sh
 ```
 
-Windows PowerShell:
-
-```powershell
-irm https://github.com/cdenihan/jbsync/releases/latest/download/install.ps1 | iex
-```
-
-The installers detect the operating system and architecture, verify the release
-SHA-256 file, and install atomically. After that, `jbsync update` replaces the
+The installer accepts only Apple Silicon macOS, verifies the release SHA-256
+file, and installs atomically. After that, `jbsync update` replaces the
 same executable in place.
 
 ## Getting started
@@ -189,8 +185,7 @@ with the compatibility metadata from each descriptor, and other machines install
 them from Marketplace through the IDE's own launcher.
 
 Plugin directories are never copied. They contain compiled code and sometimes
-native libraries, so copying them between machines — or between macOS and
-Windows — is unsound.
+native libraries, so copying them between IDE versions and machines is unsound.
 
 Compatibility is checked before anything is installed: build ranges, required
 modules, and `incompatible-with` declarations. A Python-only plugin is not

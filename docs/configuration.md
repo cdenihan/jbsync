@@ -47,9 +47,7 @@ branch = "main"
 [jetbrains]
 # Where the JetBrains config root is. "auto" (or unset) uses the OS convention:
 #   macOS    ~/Library/Application Support/JetBrains
-#   Linux    $XDG_CONFIG_HOME/JetBrains, else ~/.config/JetBrains
-#   Windows  %APPDATA%\JetBrains
-# root = "/opt/jetbrains-config"                       # default: auto
+# root = "/Volumes/work/jetbrains-config"                       # default: auto
 
 # Extra directories to search for installed IDEs, used to find the launcher
 # binary for plugin installation. Rarely needed.

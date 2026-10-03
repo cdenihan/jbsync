@@ -92,13 +92,7 @@ struct RawLaunch {
 }
 
 fn current_os_tag() -> &'static str {
-    if cfg!(target_os = "macos") {
-        "macOS"
-    } else if cfg!(target_os = "windows") {
-        "Windows"
-    } else {
-        "Linux"
-    }
+    "macOS"
 }
 
 fn installation_root(info_path: &Path) -> PathBuf {

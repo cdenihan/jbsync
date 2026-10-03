@@ -1,57 +1,43 @@
 name: Zig rewrite experiment
-
 on:
   pull_request:
   push:
     branches: [main]
-
 permissions:
   contents: read
-
 concurrency:
   group: zig-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
-
 jobs:
   native:
-    name: Zig 0.17.0 / ${{ matrix.os }}
+    name: Apple Silicon / ${{ matrix.mode }}
+    runs-on: macos-15
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+        mode: [Debug, ReleaseSafe, ReleaseFast]
     steps:
       - uses: actions/checkout@v4
+      - name: Verify Apple Silicon runner
+        run: test "$(uname -m)" = arm64
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
         with:
           version: 0.17.0
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: zig fmt --check build.zig build.zig.zon src/main.zig src/root.zig src/zig
-      - run: zig build test --summary all
-      - run: zig build -Doptimize=ReleaseSafe
-      - name: CLI and Git scenarios
-        shell: bash
-        run: |
-          binary=zig-out/bin/jbsync
-          if [[ "$RUNNER_OS" == Windows ]]; then binary+=.exe; fi
-          python tests/zig/integration.py "$binary"
-      - name: Upload experimental binary
-        uses: actions/upload-artifact@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: zig fmt --check build.zig build.zig.zon src
+      - run: zig build test --summary all -Doptimize=${{ matrix.mode }}
+      - run: zig build validation -Doptimize=${{ matrix.mode }}
+      - run: zig build -Doptimize=${{ matrix.mode }}
+      - run: python3 tests/zig/integration.py zig-out/bin/jbsync
+      - run: cargo build --locked --example validation_oracle
+      - run: python3 tests/zig/differential.py zig-out/bin/jbsync-validation target/debug/examples/validation_oracle
+      - run: sh tests/zig/platform.sh
+      - uses: actions/upload-artifact@v4
         with:
-          name: jbsync-zig-${{ matrix.os }}
-          path: zig-out/bin/*
-
-  cross:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        target: [aarch64-linux-musl, x86_64-linux-musl, aarch64-macos, x86_64-macos, x86_64-windows]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
-        with:
-          version: 0.17.0
-      - run: zig build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseSafe
+          name: jbsync-zig-macos-aarch64-${{ matrix.mode }}
+          path: zig-out/bin/jbsync

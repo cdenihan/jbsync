@@ -176,13 +176,13 @@ pub fn parse(a: A, input: []const u8) !*Node {
     if (p.pos != input.len) return error.InvalidXml;
     return root;
 }
-fn decode(a: A, raw: []const u8, attribute: bool) ![]const u8 {
+fn decode(a: A, raw: []const u8, _: bool) ![]const u8 {
     var out: std.ArrayList(u8) = .empty;
     var i: usize = 0;
     while (i < raw.len) : (i += 1) {
         const ch = raw[i];
         if (ch != '&') {
-            try out.append(a, if (attribute and (ch == '\n' or ch == '\t' or ch == '\r')) ' ' else ch);
+            try out.append(a, ch);
             continue;
         }
         const end = std.mem.indexOfScalarPos(u8, raw, i, ';') orelse return error.InvalidXml;
@@ -270,11 +270,11 @@ fn addressValue(a: A, s: []const u8) A.Error![]const u8 {
 
 fn segment(a: A, parent: *const Node, index: usize) ![]const u8 {
     const n = parent.children.items[index];
+    if (n.key()) |k| return std.fmt.allocPrint(a, "{s}[{s}={s}]", .{ n.name, k, try addressValue(a, n.attrs.get(k).?) });
     var counter: usize = 0;
     for (parent.children.items[0..index]) |previous| if (eq(u8, previous.name, n.name)) {
         counter += 1;
     };
-    if (n.key()) |k| return std.fmt.allocPrint(a, "{s}[{s}={s}]", .{ n.name, k, try addressValue(a, n.attrs.get(k).?) });
     return std.fmt.allocPrint(a, "{s}#{d}", .{ n.name, counter });
 }
 fn joined(a: A, prefix: []const u8, leaf: []const u8) ![]const u8 {
@@ -313,15 +313,16 @@ pub fn project(a: A, n: *const Node) !View {
 /// Traverse the donor in document order so a new keyless item #10 is never
 /// inserted before #2. Remove in reverse target order to keep indices stable.
 pub fn patch(a: A, target: *Node, donor: *const Node, updates: View, removals: []const []const u8) !void {
+    if (updates.count() == 0 and removals.len == 0) return;
     for (try ordered(a, donor)) |leaf| if (updates.get(leaf.path)) |value| try set(a, target, donor, leaf.path, value);
+    if (removals.len == 0) return;
+    var removed: std.StringHashMapUnmanaged(void) = .empty;
+    for (removals) |path| try removed.put(a, path, {});
     const target_leaves = try ordered(a, target);
     var i = target_leaves.len;
     while (i > 0) {
         i -= 1;
-        for (removals) |path| if (eq(u8, path, target_leaves[i].path)) {
-            try remove(a, target, path);
-            break;
-        };
+        if (removed.contains(target_leaves[i].path)) try remove(a, target, target_leaves[i].path);
     }
 }
 
@@ -396,4 +397,15 @@ test "projection addresses escape delimiters and preserve domain presence" {
     const view = try project(a, n);
     try std.testing.expectEqualStrings("3", view.get("component[name=A%2FB]/option[name=x%5By%5D]/@value").?);
     try std.testing.expect(view.contains("component[name=A%2FB]/global_color_scheme[name=Dark]/#present"));
+}
+
+test "bounded parser rejects malformed entities, controls, and deep trees" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    for ([_][]const u8{ "<a>&unknown;</a>", "<a>&#0;</a>", "<a>&#xD800;</a>", "<a>&#x110000;</a>", "<a>\x00</a>", "<a>\xff</a>", "<a/ ><b/>", "<1a/>", "<!DOCTYPE a><a/>" }) |raw| try std.testing.expectError(error.InvalidXml, parse(a, raw));
+    var deep: std.Io.Writer.Allocating = .init(a);
+    for (0..130) |_| try deep.writer.writeAll("<a>");
+    for (0..130) |_| try deep.writer.writeAll("</a>");
+    try std.testing.expectError(error.XmlDepthExceeded, parse(a, deep.written()));
 }

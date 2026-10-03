@@ -76,6 +76,9 @@ fn fromJar(fs: files.Fs, path: []const u8) !?[]const u8 {
     return null;
 }
 pub fn installed(fs: files.Fs, ide: settings.Ide) ![]Plugin {
+    return installedWithBundled(fs, ide, false);
+}
+fn installedWithBundled(fs: files.Fs, ide: settings.Ide, include_bundled: bool) ![]Plugin {
     var result: std.ArrayList(Plugin) = .empty;
     const root = try fs.join(&.{ ide.path, "plugins" });
     const dir = std.Io.Dir.cwd().openDir(fs.io, root, .{ .iterate = true }) catch |err| switch (err) {
@@ -84,7 +87,7 @@ pub fn installed(fs: files.Fs, ide: settings.Ide) ![]Plugin {
     };
     defer dir.close(fs.io);
     var it = dir.iterate();
-    const bundled_raw = (try fs.read(try fs.join(&.{ ide.path, "bundled_plugins.txt" }))) orelse "";
+    const bundled_ids = try bundled(fs, ide);
     while (try it.next(fs.io)) |entry| {
         if (entry.kind != .directory) continue;
         const fallback = try fs.allocator.dupe(u8, entry.name);
@@ -99,13 +102,7 @@ pub fn installed(fs: files.Fs, ide: settings.Ide) ![]Plugin {
         }
         const source = raw orelse continue;
         var p = try descriptor(fs.allocator, source, fallback);
-        var bundled = has(ide.metadata.bundled_plugins, p.id);
-        var lines = std.mem.splitScalar(u8, bundled_raw, '\n');
-        while (lines.next()) |line| {
-            const pipe = std.mem.indexOfScalar(u8, line, '|') orelse line.len;
-            if (eq(u8, std.mem.trim(u8, line[0..pipe], " \r\t"), p.id)) bundled = true;
-        }
-        if (bundled) continue;
+        if (!include_bundled and bundled_ids.contains(p.id)) continue;
         p.source_products = try fs.allocator.dupe([]const u8, &.{ide.product});
         try result.append(fs.allocator, p);
     }
@@ -115,6 +112,31 @@ pub fn installed(fs: files.Fs, ide: settings.Ide) ![]Plugin {
         }
     }.less);
     return result.items;
+}
+fn bundled(fs: files.Fs, ide: settings.Ide) !std.StringHashMapUnmanaged(void) {
+    var ids: std.StringHashMapUnmanaged(void) = .empty;
+    for (ide.metadata.bundled_plugins) |id| try ids.put(fs.allocator, id, {});
+    const raw = (try fs.read(try fs.join(&.{ ide.path, "bundled_plugins.txt" }))) orelse "";
+    var lines = std.mem.splitScalar(u8, raw, '\n');
+    while (lines.next()) |line| {
+        const pipe = std.mem.indexOfScalar(u8, line, '|') orelse line.len;
+        const id = std.mem.trim(u8, line[0..pipe], " \r\t");
+        if (id.len != 0) try ids.put(fs.allocator, id, {});
+    }
+    return ids;
+}
+fn nextNumber(raw: []const u8, index: *usize) ?u64 {
+    while (index.* < raw.len and !std.ascii.isDigit(raw[index.*])) index.* += 1;
+    if (index.* == raw.len) return null;
+    var value: u64 = 0;
+    while (index.* < raw.len and std.ascii.isDigit(raw[index.*])) : (index.* += 1) value = value *| 10 +| (raw[index.*] - '0');
+    return value;
+}
+fn buildPrefix(build: []const u8, prefix: []const u8) bool {
+    var bi: usize = 0;
+    var pi: usize = 0;
+    while (nextNumber(prefix, &pi)) |n| if ((nextNumber(build, &bi) orelse return false) != n) return false;
+    return true;
 }
 fn has(items: []const []const u8, value: []const u8) bool {
     for (items) |item| if (eq(u8, item, value)) return true;
@@ -130,16 +152,16 @@ pub fn compatible(a: A, plugin: Plugin, ide: settings.Ide, capabilities: *const 
         if (eq(u8, action, "only")) manual = matches else if (matches and eq(u8, action, "allow")) manual = true else if (matches and eq(u8, action, "deny")) manual = false;
     }
     if (manual) |allow| return if (allow) null else "manual plugin rule";
-    if (ide.metadata.build.len == 0 and !has(plugin.source_products, ide.product)) return "product build metadata unavailable";
     if (plugin.since_build.len != 0 and settings.newer(plugin.since_build, ide.metadata.build)) return "IDE older than since-build";
     if (plugin.until_build.len != 0) {
         if (std.mem.endsWith(u8, plugin.until_build, ".*")) {
-            const prefix = plugin.until_build[0 .. plugin.until_build.len - 1];
-            if (!std.mem.startsWith(u8, ide.metadata.build, prefix)) return "IDE outside until-build range";
+            const prefix = plugin.until_build[0 .. plugin.until_build.len - 2];
+            if (!buildPrefix(ide.metadata.build, prefix)) return "IDE outside until-build range";
         } else if (settings.newer(ide.metadata.build, plugin.until_build)) return "IDE newer than until-build";
     }
     for (plugin.incompatible_with) |id| if (capabilities.contains(id)) return try std.fmt.allocPrint(a, "incompatible with {s}", .{id});
     for (plugin.required_dependencies) |id| if (!capabilities.contains(id)) return try std.fmt.allocPrint(a, "missing dependency {s}", .{id});
+    if (plugin.required_dependencies.len == 0 and !plugin.modular and !has(plugin.source_products, ide.product)) return "descriptor declares no product dependency";
     return null;
 }
 pub fn reconcile(fs: files.Fs, staging: *files.Staging, store: []const u8, ides: []const settings.Ide, c: config.Sync, options: @import("engine.zig").Options, out: *std.Io.Writer) ![]Action {
@@ -153,9 +175,11 @@ pub fn reconcile(fs: files.Fs, staging: *files.Staging, store: []const u8, ides:
     var observations: std.StringHashMapUnmanaged([]Plugin) = .empty;
     for (ides) |ide| {
         if (!ide.launched or !ide.selected(options.only)) continue;
-        const found = try installed(fs, ide);
+        const found = try installedWithBundled(fs, ide, true);
+        const bundled_ids = try bundled(fs, ide);
         try observations.put(a, ide.name, found);
         for (found) |p| {
+            if (bundled_ids.contains(p.id)) continue;
             var combined = p;
             if (plugins.get(p.id)) |prior| {
                 var products: std.ArrayList([]const u8) = .empty;
@@ -187,9 +211,13 @@ pub fn reconcile(fs: files.Fs, staging: *files.Staging, store: []const u8, ides:
     var actions: std.ArrayList(Action) = .empty;
     for (ides) |ide| {
         const observed = observations.get(ide.name) orelse continue;
+        var present: std.StringHashMapUnmanaged(void) = .empty;
+        for (observed) |p| try present.put(a, p.id, {});
+        var bundled_ids = try bundled(fs, ide);
         var caps: std.StringHashMapUnmanaged(void) = .empty;
         for (ide.metadata.modules) |s| try caps.put(a, s, {});
-        for (ide.metadata.bundled_plugins) |s| try caps.put(a, s, {});
+        var ids = bundled_ids.keyIterator();
+        while (ids.next()) |id| try caps.put(a, id.*, {});
         for (observed) |p| {
             try caps.put(a, p.id, {});
             for (p.provided_modules) |s| try caps.put(a, s, {});
@@ -198,7 +226,10 @@ pub fn reconcile(fs: files.Fs, staging: *files.Staging, store: []const u8, ides:
             const pattern = try config.string(rule, "ide", "*");
             if (!settings.glob(pattern, ide.name) and !settings.glob(pattern, ide.product)) continue;
             for (try config.strings(a, rule, "add", &.{})) |s| try caps.put(a, s, {});
-            for (try config.strings(a, rule, "remove", &.{})) |s| _ = caps.remove(s);
+            for (try config.strings(a, rule, "remove", &.{})) |s| {
+                _ = caps.remove(s);
+                _ = bundled_ids.remove(s);
+            }
         }
         const planned = try a.alloc(bool, ordered.len);
         @memset(planned, false);
@@ -207,7 +238,7 @@ pub fn reconcile(fs: files.Fs, staging: *files.Staging, store: []const u8, ides:
         for (0..ordered.len) |_| {
             var progressed = false;
             for (ordered, 0..) |p, index| {
-                if (planned[index] or caps.contains(p.id)) continue;
+                if (planned[index] or present.contains(p.id) or bundled_ids.contains(p.id)) continue;
                 if (try compatible(a, p, ide, &caps, c) != null) continue;
                 planned[index] = true;
                 progressed = true;
@@ -219,7 +250,7 @@ pub fn reconcile(fs: files.Fs, staging: *files.Staging, store: []const u8, ides:
             if (!progressed) break;
         }
         for (ordered, 0..) |p, index| {
-            if (planned[index] or caps.contains(p.id)) continue;
+            if (planned[index] or present.contains(p.id) or bundled_ids.contains(p.id)) continue;
             if (try compatible(a, p, ide, &caps, c)) |reason| try out.print("{s}: skip {s} ({s})\n", .{ ide.name, p.id, reason });
         }
         for (observed) |p| if (try compatible(a, p, ide, &caps, c)) |reason| try out.print("{s}: installed {s} cannot load ({s})\n", .{ ide.name, p.id, reason });

@@ -39,10 +39,16 @@ pub const Fs = struct {
             self.io.random(&random);
             const temp = try std.fmt.allocPrint(self.allocator, "{s}.{x}.tmp", .{ path, std.mem.readInt(u64, &random, .little) });
             defer cwd.deleteFile(self.io, temp) catch {};
+            const previous = cwd.statFile(self.io, path, .{ .follow_symlinks = false }) catch |err| switch (err) {
+                error.FileNotFound => null,
+                else => return err,
+            };
+            if (previous) |stat| if (stat.kind != .file) return error.NotARegularSettingsFile;
             {
-                const f = try cwd.createFile(self.io, temp, .{ .exclusive = true, .permissions = if (@import("builtin").os.tag == .windows) .default_file else .fromMode(0o600) });
+                const f = try cwd.createFile(self.io, temp, .{ .exclusive = true, .permissions = .fromMode(0o600) });
                 defer f.close(self.io);
                 try f.writeStreamingAll(self.io, bytes);
+                if (previous) |stat| try f.setPermissions(self.io, stat.permissions);
                 try f.sync(self.io);
             }
             try cwd.rename(temp, cwd, path, self.io);
@@ -84,16 +90,25 @@ pub const Fs = struct {
         }
     }
     pub fn list(self: Fs, root: []const u8) ![][]const u8 {
+        return self.listFiltered(root, false);
+    }
+    pub fn listFiltered(self: Fs, root: []const u8, ide_settings: bool) ![][]const u8 {
         var found: std.ArrayList([]const u8) = .empty;
         const dir = std.Io.Dir.cwd().openDir(self.io, root, .{ .iterate = true }) catch |err| switch (err) {
             error.FileNotFound => return &.{},
             else => return err,
         };
         defer dir.close(self.io);
-        var walker = try dir.walk(self.allocator);
+        var walker = try dir.walkSelectively(self.allocator);
         defer walker.deinit();
         while (try walker.next(self.io)) |entry| {
-            if (entry.kind != .file or internal(entry.path)) continue;
+            if (internal(entry.path)) continue;
+            if (entry.kind == .directory) {
+                if (ide_settings and entry.depth() == 1 and ignoredIdeDirectory(entry.basename)) continue;
+                try walker.enter(self.io, entry);
+                continue;
+            }
+            if (entry.kind != .file) continue;
             const path = try self.allocator.dupe(u8, entry.path);
             std.mem.replaceScalar(u8, path, '\\', '/');
             try found.append(self.allocator, path);
@@ -102,6 +117,12 @@ pub const Fs = struct {
         return found.toOwnedSlice(self.allocator);
     }
 };
+fn ignoredIdeDirectory(name: []const u8) bool {
+    for ([_][]const u8{ "plugins", "workspace", "system", "log", "event-log-metadata", "settingsSync", "tasks", "extensions" }) |ignored| {
+        if (std.mem.eql(u8, name, ignored)) return true;
+    }
+    return false;
+}
 pub fn less(_: void, a: []const u8, b: []const u8) bool {
     return std.mem.lessThan(u8, a, b);
 }
@@ -119,6 +140,8 @@ pub fn equal(a: ?[]const u8, b: ?[]const u8) bool {
 pub const Staging = struct {
     fs: Fs,
     pending: Map = .empty,
+    original: Map = .empty,
+    listings: std.StringHashMapUnmanaged([][]const u8) = .empty,
     roots: []const []const u8 = &.{},
     backups: std.ArrayList([]const u8) = .empty,
     fn validate(self: *Staging, path: []const u8) !void {
@@ -134,17 +157,33 @@ pub const Staging = struct {
         if (self.roots.len != 0) return error.UnsafeStorePath;
     }
     pub fn read(self: *Staging, path: []const u8) !?[]const u8 {
-        try self.validate(path);
         if (self.pending.getEntry(path)) |entry| return entry.value_ptr.*;
-        return self.fs.read(path);
+        if (self.original.getEntry(path)) |entry| return entry.value_ptr.*;
+        try self.validate(path);
+        const bytes = try self.fs.read(path);
+        try self.original.put(self.fs.allocator, path, bytes);
+        return bytes;
     }
     pub fn write(self: *Staging, path: []const u8, data: ?[]const u8) !void {
+        if (!self.original.contains(path)) _ = try self.read(path);
+        if (equal(self.original.get(path).?, data)) {
+            _ = self.pending.remove(path);
+            return;
+        }
         try self.validate(path);
         try self.pending.put(self.fs.allocator, path, data);
     }
     pub fn list(self: *Staging, root: []const u8) ![][]const u8 {
+        return self.listFiltered(root, false);
+    }
+    pub fn listIde(self: *Staging, root: []const u8) ![][]const u8 {
+        return self.listFiltered(root, true);
+    }
+    fn listFiltered(self: *Staging, root: []const u8, ide_settings: bool) ![][]const u8 {
+        const cached = try self.listings.getOrPut(self.fs.allocator, root);
+        if (!cached.found_existing) cached.value_ptr.* = try self.fs.listFiltered(root, ide_settings);
         var paths: std.StringHashMapUnmanaged(void) = .empty;
-        for (try self.fs.list(root)) |path| try paths.put(self.fs.allocator, path, {});
+        for (cached.value_ptr.*) |path| try paths.put(self.fs.allocator, path, {});
         const prefix = try std.fmt.allocPrint(self.fs.allocator, "{s}{s}", .{ root, std.fs.path.sep_str });
         var it = self.pending.iterator();
         while (it.next()) |entry| {
@@ -171,6 +210,13 @@ pub const Staging = struct {
         try self.backups.append(self.fs.allocator, path);
     }
     pub fn commit(self: *Staging) !void {
+        // Validate the complete plan before the first write, including files
+        // whose parent may have become a symlink while reconciliation ran.
+        var preflight = self.pending.iterator();
+        while (preflight.next()) |entry| {
+            try self.validate(entry.key_ptr.*);
+            if (!equal(try self.fs.read(entry.key_ptr.*), self.original.get(entry.key_ptr.*).?)) return error.SettingsChangedDuringSync;
+        }
         for (self.backups.items) |path| try self.fs.write(path, self.pending.get(path).?);
         var it = self.pending.iterator();
         while (it.next()) |entry| {
@@ -179,7 +225,63 @@ pub const Staging = struct {
                 is_backup = true;
                 break;
             };
-            if (!is_backup and !equal(try self.fs.read(entry.key_ptr.*), entry.value_ptr.*)) try self.fs.write(entry.key_ptr.*, entry.value_ptr.*);
+            if (!is_backup and !equal(self.original.get(entry.key_ptr.*).?, entry.value_ptr.*)) try self.fs.write(entry.key_ptr.*, entry.value_ptr.*);
         }
     }
 };
+
+test "staged reads are stable and concurrent edits abort before any write" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+    const root = try temp.dir.realPathFileAlloc(std.testing.io, ".", a);
+    const fs: Fs = .{ .allocator = a, .io = std.testing.io };
+    const first = try fs.join(&.{ root, "first.xml" });
+    const second = try fs.join(&.{ root, "second.xml" });
+    try fs.write(first, "old");
+    try fs.write(second, "original");
+    var staging: Staging = .{ .fs = fs, .roots = &.{root} };
+    try std.testing.expectEqualStrings("old", (try staging.read(first)).?);
+    try staging.write(first, "planned");
+    try staging.write(second, "new");
+    try fs.write(first, "concurrent");
+    try std.testing.expectEqualStrings("planned", (try staging.read(first)).?);
+    try std.testing.expectError(error.SettingsChangedDuringSync, staging.commit());
+    try std.testing.expectEqualStrings("concurrent", (try fs.read(first)).?);
+    try std.testing.expectEqualStrings("original", (try fs.read(second)).?);
+}
+
+test "settings traversal skips private IDE directories and Git internals" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+    const root = try temp.dir.realPathFileAlloc(std.testing.io, ".", a);
+    const fs: Fs = .{ .allocator = a, .io = std.testing.io };
+    for ([_][]const u8{ "options/editor.xml", "workspace/huge.xml", "plugins/plugin.xml", ".git/objects/blob" }) |path| try fs.write(try fs.join(&.{ root, path }), "x");
+    const list = try fs.listFiltered(root, true);
+    try std.testing.expectEqual(@as(usize, 1), list.len);
+    try std.testing.expectEqualStrings("options/editor.xml", list[0]);
+    try std.testing.expectEqual(@as(usize, 3), (try fs.list(root)).len);
+}
+
+test "a reverted staged write leaves no work" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var temp = std.testing.tmpDir(.{});
+    defer temp.cleanup();
+    const root = try temp.dir.realPathFileAlloc(std.testing.io, ".", a);
+    const fs: Fs = .{ .allocator = a, .io = std.testing.io };
+    const path = try fs.join(&.{ root, "settings" });
+    try fs.write(path, "old");
+    var staging: Staging = .{ .fs = fs, .roots = &.{root} };
+    try staging.write(path, "new");
+    try staging.write(path, "old");
+    try std.testing.expectEqual(@as(u32, 0), staging.pending.count());
+    try staging.commit();
+    try std.testing.expectEqualStrings("old", (try fs.read(path)).?);
+}

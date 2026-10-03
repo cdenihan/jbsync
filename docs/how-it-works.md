@@ -354,9 +354,8 @@ capability rather than forcing every backend to fake one. `repo.backend` in
 ### Why Git is a subprocess
 
 jbsync runs the `git` binary rather than linking a Git library. That keeps
-authentication as whatever already works for you — SSH agent, Keychain, Windows
-Credential Manager, `gh auth`, hardware keys — instead of reimplementing it, and
-avoids a C dependency in every one of eight release targets.
+authentication as whatever already works for you — SSH agent, Keychain, `gh auth`, hardware keys — instead of reimplementing it, and
+avoids an embedded C Git dependency in the Apple Silicon binary.
 
 When another machine has published since this one last looked, jbsync merges
 semantically and then records the remote as a parent, so history stays honest
@@ -371,8 +370,8 @@ compatibility metadata from each descriptor. Other machines install them from
 Marketplace through the IDE's own launcher.
 
 **Plugin directories are never copied.** They contain compiled code and
-sometimes native libraries; copying them between machines — let alone between
-macOS and Windows — is unsound.
+sometimes native libraries; copying them between IDE versions and machines
+is unsound.
 
 Compatibility is checked before anything is installed: build ranges (including
 `.*` wildcards), required modules against what each IDE provides, and

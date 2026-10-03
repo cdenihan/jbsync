@@ -45,22 +45,14 @@ pub const Engine = struct {
         const machine_file = try std.fmt.allocPrint(fs.allocator, "{s}.toml", .{local.machine});
         const policy = try config.Sync.load(fs.allocator, (try fs.read(try fs.join(&.{ store, "sync.toml" }))) orelse "", (try fs.read(try fs.join(&.{ store, "machines", machine_file }))) orelse "");
         const home = env.get("HOME") orelse env.get("USERPROFILE") orelse return error.HomeNotFound;
-        const default_root = switch (@import("builtin").os.tag) {
-            .macos => try fs.join(&.{ home, "Library/Application Support/JetBrains" }),
-            .windows => try fs.join(&.{ env.get("APPDATA") orelse try fs.join(&.{ home, "AppData/Roaming" }), "JetBrains" }),
-            else => try fs.join(&.{ env.get("XDG_CONFIG_HOME") orelse try fs.join(&.{ home, ".config" }), "JetBrains" }),
-        };
+        const default_root = try fs.join(&.{ home, "Library/Application Support/JetBrains" });
         const root = if (local.root) |r| if (std.mem.eql(u8, r, "auto")) default_root else r else default_root;
-        const installations = if (local.install_roots.len != 0) local.install_roots else switch (@import("builtin").os.tag) {
-            .macos => &[_][]const u8{ "/Applications", try fs.join(&.{ home, "Applications" }), try fs.join(&.{ home, "Library/Application Support/JetBrains/Toolbox/apps" }) },
-            .windows => &[_][]const u8{ try fs.join(&.{ env.get("PROGRAMFILES") orelse "C:/Program Files", "JetBrains" }), try fs.join(&.{ env.get("LOCALAPPDATA") orelse try fs.join(&.{ home, "AppData/Local" }), "JetBrains/Toolbox/apps" }) },
-            else => &[_][]const u8{ "/opt", try fs.join(&.{ home, ".local/share/JetBrains/Toolbox/apps" }) },
-        };
+        const installations = if (local.install_roots.len != 0) local.install_roots else &[_][]const u8{ "/Applications", try fs.join(&.{ home, "Applications" }), try fs.join(&.{ home, "Library/Application Support/JetBrains/Toolbox/apps" }) };
         return .{ .fs = fs, .app = app, .local = local, .policy = policy, .git = .{ .fs = fs, .root = store, .remote = local.remote, .branch = local.branch }, .ides = try settings.discover(fs, root, &.{"*"}, installations) };
     }
     pub fn lock(self: Engine) !std.Io.File {
         try self.fs.mkdir(self.app);
-        if (@import("builtin").os.tag != .windows) {
+        {
             const dir = try std.Io.Dir.cwd().openDir(self.fs.io, self.app, .{});
             defer dir.close(self.fs.io);
             try dir.setPermissions(self.fs.io, .fromMode(0o700));
@@ -148,7 +140,7 @@ pub const Engine = struct {
                     continue;
                 }
                 var paths: std.StringHashMapUnmanaged([]const u8) = .empty;
-                for (try self.fs.list(ide.path)) |relative| {
+                for (try staging.listIde(ide.path)) |relative| {
                     if (!settings.roamable(self.policy, learned.items, relative)) continue;
                     const canonical = if (std.mem.eql(u8, relative, try settings.vmName(ide, self.policy))) "idea.vmoptions" else relative;
                     try paths.put(a, canonical, relative);
@@ -167,9 +159,6 @@ pub const Engine = struct {
                 for (try merge.unionKeys(a, &.{sort_view})) |relative| {
                     const target = paths.get(relative).?;
                     if (!settings.safeRelative(relative) or !settings.safeRelative(target)) return error.UnsafeStorePath;
-                    try self.fs.checkPath(ide.path, target);
-                    try self.fs.checkPath(shared, relative);
-                    try self.fs.checkPath(base_root, relative);
                     const ide_file = try self.fs.join(&.{ ide.path, target });
                     const store_file = try self.fs.join(&.{ shared, relative });
                     const base_file = try self.fs.join(&.{ base_root, relative });
@@ -187,7 +176,7 @@ pub const Engine = struct {
                         const label = try std.fmt.allocPrint(a, "{s}/{s}", .{ ide.name, relative });
                         try report.absorb(label, r);
                         try staging.write(store_file, r.content);
-                        if (!options.collect_only and r.incoming.items.len != 0) try self.writeBack(&staging, ide, relative, ide_file, raw, r, stamp);
+                        if (!options.collect_only and r.incoming.items.len != 0) try self.writeBack(&staging, ide, relative, ide_file, raw, pruned.content, r, stamp);
                     }
                     if (pass == 0) {
                         report.pruned += pruned.removed;
@@ -221,7 +210,7 @@ pub const Engine = struct {
         const stored = try config.parse(a, (try staging.read(path)) orelse "");
         var values: config.Value = try config.table(stored, "files");
         var changed = false;
-        for (try self.fs.list(ide.path)) |relative| {
+        for (try staging.listIde(ide.path)) |relative| {
             if (!settings.roamable(self.policy, manifest, relative)) continue;
             const raw = try self.fs.read(try self.fs.join(&.{ ide.path, relative })) orelse continue;
             const n = xml.parse(a, raw) catch |err| switch (err) {
@@ -251,7 +240,7 @@ pub const Engine = struct {
         }
         try staging.write(path, try out.toOwnedSlice());
     }
-    fn writeBack(self: Engine, staging: *files.Staging, ide: settings.Ide, relative: []const u8, path: []const u8, raw: ?[]const u8, result: merge.Result, stamp: []const u8) !void {
+    fn writeBack(self: Engine, staging: *files.Staging, ide: settings.Ide, relative: []const u8, path: []const u8, raw: ?[]const u8, shared_before: ?[]const u8, result: merge.Result, stamp: []const u8) !void {
         const a = self.fs.allocator;
         var updated = result.content;
         if (raw) |bytes| {
@@ -263,7 +252,22 @@ pub const Engine = struct {
                     error.OutOfMemory => return err,
                     else => null,
                 } else null;
-                if (donor != null) {
+                if (donor != null) replacement: {
+                    for (result.incoming.items) |change| {
+                        if (change.path.len != 0) continue;
+                        _ = xml.project(a, donor.?) catch |err| switch (err) {
+                            error.AmbiguousXmlAddress => {
+                                // A whole-file fallback must never graft two
+                                // repeated addresses onto the same sibling.
+                                // Replace only when this contains no private
+                                // or default values that would be discarded.
+                                if (!files.equal(try xml.serialize(a, target), shared_before)) return error.AmbiguousXmlWithPrivateSettings;
+                                updated = result.content;
+                                break :replacement;
+                            },
+                            else => return err,
+                        };
+                    }
                     var updates: xml.View = .empty;
                     var removals: std.ArrayList([]const u8) = .empty;
                     for (result.incoming.items) |change| {

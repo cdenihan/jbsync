@@ -34,6 +34,14 @@ fn expandedGlob(pattern: []const u8, text: []const u8, depth: usize) bool {
         }
         return false;
     }
+    // globset's recursive directory wildcard also matches zero directories.
+    if (std.mem.indexOf(u8, pattern, "**/")) |start| {
+        if (start == 0 or pattern[start - 1] == '/') {
+            var buffer: [4096]u8 = undefined;
+            const zero = std.fmt.bufPrint(&buffer, "{s}{s}", .{ pattern[0..start], pattern[start + 3 ..] }) catch return false;
+            if (expandedGlob(zero, text, depth + 1)) return true;
+        }
+    }
     return simpleGlob(pattern, text);
 }
 fn simpleGlob(pattern: []const u8, text: []const u8) bool {
@@ -195,11 +203,7 @@ pub fn sortIdes(ides: []Ide, patterns: []const []const u8) void {
     }.less);
 }
 pub fn osTag() []const u8 {
-    return switch (@import("builtin").os.tag) {
-        .macos => "macOS",
-        .windows => "Windows",
-        else => "Linux",
-    };
+    return "macOS";
 }
 pub fn jsonString(value: std.json.Value, key: []const u8) ?[]const u8 {
     if (value != .object) return null;

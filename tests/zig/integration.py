@@ -13,6 +13,7 @@ import zipfile
 
 PARSER = argparse.ArgumentParser()
 PARSER.add_argument('binary', type=Path)
+PARSER.add_argument('--rust-baseline', action='store_true')
 ARGS = PARSER.parse_args()
 BINARY = ARGS.binary.resolve()
 
@@ -60,7 +61,8 @@ class Machine:
         env = dict(os.environ, GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL=os.devnull)
         env.pop('JBSYNC_CONFIG_DIR', None)
         p = subprocess.run([str(BINARY), '--config-dir', str(self.app), *args], capture_output=True, text=True, env=env)
-        if p.returncode != expected:
+        accepted = (expected, 2) if ARGS.rust_baseline and expected == 1 else (expected,)
+        if p.returncode not in accepted:
             raise AssertionError(f'{args}: exit {p.returncode}\n{p.stdout}\n{p.stderr}')
         return p.stdout
 
@@ -118,6 +120,7 @@ class Integration(unittest.TestCase):
             self.assertEqual(m.value(m.names[0], 'wrap'), 'false')
         git('--git-dir', self.remote, 'fsck', '--full')
 
+    @unittest.skipIf(ARGS.rust_baseline, 'Rust engine currently writes with --prefer neither; Zig intentionally aborts')
     def test_conflict_policies_and_neither_does_not_write(self):
         m = self.machine()
         for name in m.names:
@@ -210,6 +213,7 @@ class Integration(unittest.TestCase):
         m.sync()
         self.assertIn('UseZGC', (m.root / m.names[1] / 'pycharm.vmoptions').read_text())
 
+    @unittest.skipIf(ARGS.rust_baseline, 'Rust currently retains deleted shared files on the other machine')
     def test_remote_deletion_preserves_private_content(self):
         a = self.machine(names=('IntelliJIdea2026.2',))
         a.option(a.names[0], tabs='8')
@@ -231,6 +235,7 @@ class Integration(unittest.TestCase):
             m.sync(expected=1)
 
     @unittest.skipIf(os.name == 'nt', 'Windows symlink creation needs extra privileges')
+    @unittest.skipIf(ARGS.rust_baseline, 'Rust skips symlink files rather than rejecting the sync')
     def test_incoming_settings_never_follow_a_symlink(self):
         m = self.machine()
         m.option(m.names[0], tabs='8')
@@ -260,6 +265,152 @@ class Integration(unittest.TestCase):
         m.run('disable-builtin-sync')
         self.assertIn('false', (m.root / m.names[0] / 'options/settingsSync.xml').read_text())
         m.run('sync', '--dr-run', expected=1)
+
+    def seed_plugins(self, m, plugins, policy=''):
+        m.sync()
+        (m.app / 'data/plugins.json').write_text(json.dumps(dict(version=1, plugins=plugins)))
+        (m.app / 'data/sync.toml').write_text(policy)
+
+    def test_existing_file_permissions_survive_replacement(self):
+        m = self.machine()
+        for name in m.names:
+            m.option(name)
+        m.sync()
+        target = m.root / m.names[1] / 'options/editor.xml'
+        target.chmod(0o640)
+        m.option(m.names[0], tabs='8')
+        m.sync()
+        self.assertEqual(target.stat().st_mode & 0o777, 0o640)
+        self.assertEqual(m.value(m.names[1]), '8')
+
+    @unittest.skipIf(ARGS.rust_baseline, 'Rust second-resolution backup folders coalesce rapid syncs')
+    def test_backup_retention_and_original_bytes(self):
+        m = self.machine()
+        for name in m.names:
+            m.option(name)
+        m.sync()
+        for i in range(12):
+            old = (m.root / m.names[1] / 'options/editor.xml').read_bytes()
+            m.option(m.names[0], tabs=str(8+i))
+            m.sync()
+            runs = sorted((m.app / 'backups').iterdir())
+            self.assertLessEqual(len(runs), 10)
+            self.assertEqual((runs[-1] / m.names[1] / 'options/editor.xml').read_bytes(), old)
+        self.assertEqual(len(list((m.app / 'backups').iterdir())), 10)
+
+    def test_backup_opt_out(self):
+        m = self.machine()
+        for name in m.names:
+            m.option(name)
+        m.sync()
+        (m.app / 'data/sync.toml').write_text('[jetbrains]\nbackups=false\n')
+        m.option(m.names[0], tabs='8')
+        m.sync()
+        self.assertEqual(m.value(m.names[1]), '8')
+        self.assertFalse((m.app / 'backups').exists())
+
+    def test_capability_does_not_suppress_plugin_install(self):
+        m = self.machine(names=('IntelliJIdea2026.2',))
+        self.seed_plugins(m, [dict(id='example', source_products=['IntelliJIdea'])],
+                          "[[plugins.capability]]\nide='*'\nadd=['example']\n")
+        self.assertIn('install example', m.sync())
+
+    def test_bundled_plugins_and_capability_removal(self):
+        m = self.machine(names=('IntelliJIdea2026.2',))
+        self.seed_plugins(m, [dict(id='example', source_products=['IntelliJIdea'])])
+        m.write(m.names[0], 'bundled_plugins.txt', 'example|1.0\n')
+        self.assertNotIn('install example', m.sync())
+        (m.app / 'data/sync.toml').write_text("[[plugins.capability]]\nide='*'\nremove=['example']\n")
+        self.assertIn('install example', m.sync())
+
+    def test_product_build_prefix_and_conservative_plugin_heuristic(self):
+        m = self.machine(names=('IntelliJIdea2026.2',))
+        (m.install / 'product-info.json').write_text(json.dumps(dict(
+            dataDirectoryName=m.names[0], buildNumber='IC-262.3', modules=['platform'])))
+        self.seed_plugins(m, [dict(id='compatible', until_build='262.*', required_dependencies=['platform']),
+                              dict(id='unknown', source_products=['PyCharm']),
+                              dict(id='too-new', since_build='263.1', required_dependencies=['platform'])])
+        out = m.sync()
+        self.assertIn('install compatible', out)
+        self.assertNotIn('install unknown', out)
+        self.assertNotIn('install too-new', out)
+
+    def test_plugin_launcher_is_called_only_after_dry_run(self):
+        m = self.machine(names=('IntelliJIdea2026.2',))
+        marker = self.path / 'installed.txt'
+        launcher = self.path / 'launcher'
+        launcher.write_text('#!/bin/sh\nprintf "%s\\n" "$@" >> ' + str(marker) + '\n')
+        launcher.chmod(0o700)
+        self.seed_plugins(m, [dict(id='example', source_products=['IntelliJIdea'])],
+                          '[plugins.launchers]\nIntelliJIdea=' + json.dumps(str(launcher)) + '\n')
+        before = m.snapshot()
+        m.run('sync', '--dry-run')
+        self.assertFalse(marker.exists())
+        self.assertEqual(before, m.snapshot())
+        m.run('sync')
+        self.assertEqual(marker.read_text().splitlines(), ['installPlugins', 'example'])
+
+    def test_managed_plugin_dependencies_are_planned(self):
+        m = self.machine(names=('IntelliJIdea2026.2',))
+        self.seed_plugins(m, [dict(id='a-dependent', required_dependencies=['z-provider']),
+                              dict(id='z-provider', source_products=['IntelliJIdea'])])
+        out = m.sync()
+        self.assertIn('install z-provider', out)
+        self.assertIn('install a-dependent', out)
+
+    @unittest.skipIf(ARGS.rust_baseline, 'Rust loads remote policy on the next sync')
+    def test_remote_policy_applies_in_same_sync(self):
+        a = self.machine(names=('IntelliJIdea2026.2',))
+        a.option(a.names[0], tabs='8')
+        a.sync()
+        (a.app / 'data/sync.toml').write_text("[jetbrains]\nexclude=['options/editor.xml']\n")
+        a.sync()
+        b = self.machine('b', names=a.names)
+        b.sync()
+        self.assertIsNone(b.value(b.names[0]))
+
+    @unittest.skipIf(ARGS.rust_baseline, 'Rust collapses repeated IntelliLang projection addresses during edits')
+    def test_real_xml_corpus_converges_without_loss(self):
+        m = self.machine()
+        m.sync()
+        (m.app / 'data/sync.toml').write_text("[jetbrains]\ninclude=['**']\n")
+        for fixture in sorted((Path(__file__).resolve().parents[1] / 'corpus').glob('*.xml')):
+            relative = fixture.name.replace('__', '/')
+            m.write(m.names[0], relative, fixture.read_text())
+        m.sync()
+        before = m.snapshot()
+        m.sync()
+        self.assertEqual(before, m.snapshot())
+        # IntelliLang has repeated keyed siblings; every injection must remain.
+        source = ET.parse(m.root / m.names[0] / 'options/IntelliLang.xml')
+        target = ET.parse(m.root / m.names[1] / 'options/IntelliLang.xml')
+        def tree(n):
+            return (n.tag, sorted(n.attrib.items()), (n.text or '').strip(), [tree(c) for c in n])
+        self.assertEqual(tree(source.getroot()), tree(target.getroot()))
+        # A later edit to repeated keyed siblings must remain lossless too.
+        path = m.root / m.names[0] / 'options/IntelliLang.xml'
+        path.write_text(path.read_text().replace('injector-id="groovy"', 'injector-id="changed"', 1))
+        m.sync()
+        self.assertEqual(tree(ET.parse(path).getroot()), tree(ET.parse(m.root / m.names[1] / 'options/IntelliLang.xml').getroot()))
+
+    @unittest.skipIf(ARGS.rust_baseline, 'Rust currently suppresses failed fetches')
+    def test_failed_fetch_leaves_settings_untouched(self):
+        m = self.machine()
+        m.option(m.names[0])
+        m.sync()
+        config = m.app / 'config.toml'
+        config.write_text(config.read_text().replace(str(self.remote), str(self.path / 'absent.git')))
+        before = m.snapshot()
+        m.sync(expected=1)
+        self.assertEqual(before, m.snapshot())
+
+    def test_ide_selector_limits_writes(self):
+        m = self.machine()
+        m.option(m.names[0], tabs='8')
+        m.sync('--ide', 'IntelliJ*')
+        self.assertIsNone(m.value(m.names[1]))
+        m.sync()
+        self.assertEqual(m.value(m.names[1]), '8')
 
 
 if __name__ == '__main__':

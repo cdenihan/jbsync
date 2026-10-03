@@ -4,6 +4,8 @@ pub fn build(b: *std.Build) void {
     if (@import("builtin").zig_version.major != 0 or @import("builtin").zig_version.minor != 17)
         @compileError("This experiment requires Zig 0.17.x");
     const target = b.standardTargetOptions(.{});
+    if (target.result.os.tag != .macos or target.result.cpu.arch != .aarch64)
+        @panic("jbsync supports only Apple Silicon Macs (aarch64-macos)");
     const optimize = b.standardOptimizeOption(.{});
 
     const mod = b.addModule("jbsync", .{
@@ -28,6 +30,18 @@ pub fn build(b: *std.Build) void {
     options.addOption([]const u8, "version", std.mem.trim(u8, @embedFile("VERSION"), "\r\n "));
     mod.addOptions("build_options", options);
     b.installArtifact(exe);
+
+    const validator = b.addExecutable(.{
+        .name = "jbsync-validation",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/validation.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "jbsync", .module = mod }},
+        }),
+    });
+    const validation = b.step("validation", "Build the Rust differential test helper");
+    validation.dependOn(&b.addInstallArtifact(validator, .{}).step);
 
     const run_step = b.step("run", "Run the app");
 

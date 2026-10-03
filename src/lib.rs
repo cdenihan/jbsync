@@ -1,3 +1,6 @@
+#[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+compile_error!("jbsync supports only Apple Silicon Macs (aarch64-apple-darwin)");
+
 pub mod backend;
 pub mod cli;
 pub mod config;
