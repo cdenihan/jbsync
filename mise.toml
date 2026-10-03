@@ -1,5 +1,6 @@
 [tools]
 rust = "stable"
+zig = "0.17.0"
 
 [tasks.build]
 description = "Build the debug binary"
@@ -20,3 +21,15 @@ run = "cargo clippy --locked --all-targets --all-features -- -D warnings"
 [tasks.ci]
 description = "Run everything CI runs"
 depends = ["fmt", "lint", "test"]
+
+[tasks.zig-build]
+description = "Build the experimental Zig implementation"
+run = "zig build -Doptimize=ReleaseSafe"
+
+[tasks.zig-test]
+description = "Test the Zig library and real CLI/Git scenarios"
+run = ["zig build test", "zig build", "python3 tests/zig/integration.py zig-out/bin/jbsync"]
+
+[tasks.zig-ci]
+description = "Check the Zig rewrite experiment"
+run = ["zig fmt --check build.zig build.zig.zon src/main.zig src/root.zig src/zig", "zig build test", "zig build -Doptimize=ReleaseSafe", "python3 tests/zig/integration.py zig-out/bin/jbsync"]

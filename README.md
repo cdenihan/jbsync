@@ -1,5 +1,10 @@
 # jbsync
 
+This branch includes an experimental **Zig 0.17.0 rewrite**. Build and test it
+with `zig build` and `zig build test`; see [the experiment guide](docs/zig-rewrite.md)
+for CLI scenario tests, design choices, and remaining parity gaps. The Rust
+implementation and release pipeline remain available as the comparison baseline.
+
 Settings and plugin sync for JetBrains IDEs, across every IDE on a machine and
 across every machine you use.
 
