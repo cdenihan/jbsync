@@ -1,0 +1,40 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "01M41W98NS9WV2TJ0EST2VWFCC",
+  "session_id": "01a10371-6d69-7ee3-87c4-79b07f14334b",
+  "strategy": "manual-commit",
+  "created_at": "2026-10-03T21:56:21.370661Z",
+  "branch": "codex/zig-0.17-rewrite",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "docs/zig-rewrite.md",
+    "src/zig/merge.zig",
+    "src/zig/xml.zig",
+    "tests/zig/integration.py"
+  ],
+  "agent": "Codex",
+  "model": "gpt-6.1-sol",
+  "turn_id": "bad0836cc3ab",
+  "checkpoint_transcript_start": 968,
+  "transcript_lines_at_start": 968,
+  "compact_transcript_start": 125,
+  "token_usage": {
+    "input_tokens": 13790,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 1158400,
+    "output_tokens": 10045,
+    "api_call_count": 6
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-10-03T21:56:21.296037Z",
+    "agent_lines": 46,
+    "agent_removed": 7,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 46,
+    "total_lines_changed": 53,
+    "agent_percentage": 100,
+    "metric_version": 2
+  }
+}
