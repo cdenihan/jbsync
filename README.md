@@ -1,5 +1,10 @@
 # jbsync
 
+Built with **Zig 0.17.0** for **Apple Silicon Macs running macOS 15 or newer**. Intel Macs,
+Linux and Windows are unsupported. The implementation uses the Zig standard
+library with no package dependencies; Git and the macOS download tools handle
+transport and installation.
+
 Settings and plugin sync for JetBrains IDEs, across every IDE on a machine and
 across every machine you use.
 
@@ -44,20 +49,14 @@ Committed: 3 file(s) at 8f21c0a4
 
 ## Install
 
-Linux or macOS:
+Apple Silicon macOS:
 
 ```console
 curl -fsSL https://github.com/cdenihan/jbsync/releases/latest/download/install.sh | sh
 ```
 
-Windows PowerShell:
-
-```powershell
-irm https://github.com/cdenihan/jbsync/releases/latest/download/install.ps1 | iex
-```
-
-The installers detect the operating system and architecture, verify the release
-SHA-256 file, and install atomically. After that, `jbsync update` replaces the
+The installer accepts only Apple Silicon macOS, verifies the release SHA-256
+file, and installs atomically. After that, `jbsync update` replaces the
 same executable in place.
 
 ## Getting started
@@ -162,8 +161,8 @@ are kept, and only two different values for the *same* flag conflict, so
 ## Safety
 
 - **Lossless storage.** Settings are stored as canonical XML, not converted to
-  another format. Canonicalization is verified against the full corpus of a real
-  installation: parsing, re-serializing and re-parsing must produce an identical
+  another format. Canonicalization is verified against real XML fixtures:
+  parsing, re-serializing and re-parsing must produce an identical
   document and an identical projection, and serialization must be idempotent.
 - **Backups.** Every IDE file is copied to `~/.jbsync/backups/<timestamp>/`
   before it is overwritten.
@@ -184,8 +183,7 @@ with the compatibility metadata from each descriptor, and other machines install
 them from Marketplace through the IDE's own launcher.
 
 Plugin directories are never copied. They contain compiled code and sometimes
-native libraries, so copying them between machines — or between macOS and
-Windows — is unsound.
+native libraries, so copying them between IDE versions and machines is unsound.
 
 Compatibility is checked before anything is installed: build ranges, required
 modules, and `incompatible-with` declarations. A Python-only plugin is not
@@ -214,7 +212,7 @@ branch = "main"
 
 [jetbrains]
 # root = "auto"                # detected per OS; override if you must
-# install_roots = ["/opt/jetbrains"]
+# install_roots = ["/Applications"]
 
 [machine]
 # id = "work-laptop"           # defaults to the hostname
@@ -268,48 +266,26 @@ Useful flags: `--dry-run`, `--verbose`, `--prefer local|remote|neither`,
 
 ## Architecture
 
-```
-IDE config dirs ──▶ discovery ──▶ pruning ──▶ canonical XML ──┐
-                                                              ▼
-                                                   three-way merge
-                                                              ▲
-                              store working copy ◀── backend ──┘
-```
-
-- `src/xml/` — an order-preserving DOM, a deterministic serializer, and the flat
-  projection that lets a merge address one setting at a time.
-- `src/settings/` — which files sync, and which settings inside them are real
-  user choices.
-- `src/sync/` — the three-way merge, orchestration, and reporting.
-- `src/backend/` — where the store lives and how it travels.
-- `src/plugins.rs` — plugin descriptors, compatibility, and the manifest.
-
-Two decisions worth knowing about, both explained in
-[how it works](docs/how-it-works.md): the engine never talks to Git — it asks a
-`Backend` for three views of the store and merges them itself, so Turso, a
-custom HTTP service or Convex could replace it — and there is deliberately **no
-IDE plugin**, because the platform offers no supported way to observe a setting
-change or to make a running IDE reload one.
+`src/zig/xml.zig` preserves XML order and projects settings into stable addresses.
+`merge.zig` reconciles XML, text and JVM options. `settings.zig` applies roaming
+policy and factory defaults; `plugins.zig` checks plugin compatibility.
+`engine.zig` stages changes, checks conflicts and concurrent edits, creates
+backups, and converges IDEs. `git.zig` transports the store through Git.
+`files.zig` owns bounded reads and atomic writes; `config.zig` reads configuration.
 
 ## Development
 
 ```sh
-mise install        # pins the Rust toolchain
-mise run ci         # fmt, clippy, tests — what CI runs
+mise install                    # Zig 0.17.0
+mise run build                  # generic ARM, ReleaseSafe
+mise run ci                     # full disposable validation
+sh scripts/check.sh Debug
+sh scripts/check.sh ReleaseFast
 ```
 
-Tasks are defined in `mise.toml`.
-
-Run the canonicalization check against your own installation:
-
-```sh
-JBSYNC_CORPUS="$HOME/Library/Application Support/JetBrains" \
-  cargo test --test roundtrip -- --include-ignored
-```
-
-Dependencies are kept deliberately small; distribution, self-update and the
-secure data directory come from
-[rust-cli-toolkit](https://github.com/cdenihan/rust-cli-toolkit).
+Python 3 and Git are required for validation. See [development and release
+validation](docs/development.md) for the frozen compatibility corpus, migration
+fixtures, read-only live XML checks, and release process.
 
 ## License
 

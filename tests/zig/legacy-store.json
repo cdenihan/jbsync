@@ -1,0 +1,22 @@
+{
+  "source_commit": "490807f8cc28cbf3d678f5906b668c7ffcbd3e26",
+  "machines": {
+    "a": {
+      "JetBrains/IntelliJIdea2026.2/options/editor.xml": "PGFwcGxpY2F0aW9uPjxjb21wb25lbnQgbmFtZT0iRWRpdG9yIj48b3B0aW9uIG5hbWU9InRhYnMiIHZhbHVlPSI0Ii8+PG9wdGlvbiBuYW1lPSJ3cmFwIiB2YWx1ZT0idHJ1ZSIvPjwvY29tcG9uZW50PjwvYXBwbGljYXRpb24+",
+      "JetBrains/IntelliJIdea2026.2/options/other.xml": "PGFwcGxpY2F0aW9uLz4=",
+      "JetBrains/PyCharm2026.2/options/editor.xml": "PGFwcGxpY2F0aW9uPjxjb21wb25lbnQgbmFtZT0iRWRpdG9yIj48b3B0aW9uIG5hbWU9InRhYnMiIHZhbHVlPSI0Ii8+PG9wdGlvbiBuYW1lPSJ3cmFwIiB2YWx1ZT0idHJ1ZSIvPjwvY29tcG9uZW50PjwvYXBwbGljYXRpb24+",
+      "JetBrains/PyCharm2026.2/options/other.xml": "PGFwcGxpY2F0aW9uLz4=",
+      "jbsync/data/.gitattributes": "KiAtdGV4dAo=",
+      "jbsync/data/shared/options/editor.xml": "PD94bWwgdmVyc2lvbj0nMS4wJyBlbmNvZGluZz0ndXRmLTgnPz4KPGFwcGxpY2F0aW9uPgogIDxjb21wb25lbnQgbmFtZT0iRWRpdG9yIj4KICAgIDxvcHRpb24gbmFtZT0idGFicyIgdmFsdWU9IjQiIC8+CiAgICA8b3B0aW9uIG5hbWU9IndyYXAiIHZhbHVlPSJ0cnVlIiAvPgogIDwvY29tcG9uZW50Pgo8L2FwcGxpY2F0aW9uPgo=",
+      "jbsync/base/IntelliJIdea2026.2/options/editor.xml": "PD94bWwgdmVyc2lvbj0nMS4wJyBlbmNvZGluZz0ndXRmLTgnPz4KPGFwcGxpY2F0aW9uPgogIDxjb21wb25lbnQgbmFtZT0iRWRpdG9yIj4KICAgIDxvcHRpb24gbmFtZT0idGFicyIgdmFsdWU9IjQiIC8+CiAgICA8b3B0aW9uIG5hbWU9IndyYXAiIHZhbHVlPSJ0cnVlIiAvPgogIDwvY29tcG9uZW50Pgo8L2FwcGxpY2F0aW9uPgo=",
+      "jbsync/base/PyCharm2026.2/options/editor.xml": "PD94bWwgdmVyc2lvbj0nMS4wJyBlbmNvZGluZz0ndXRmLTgnPz4KPGFwcGxpY2F0aW9uPgogIDxjb21wb25lbnQgbmFtZT0iRWRpdG9yIj4KICAgIDxvcHRpb24gbmFtZT0idGFicyIgdmFsdWU9IjQiIC8+CiAgICA8b3B0aW9uIG5hbWU9IndyYXAiIHZhbHVlPSJ0cnVlIiAvPgogIDwvY29tcG9uZW50Pgo8L2FwcGxpY2F0aW9uPgo="
+    },
+    "b": {
+      "JetBrains/IntelliJIdea2026.2/options/editor.xml": "PD94bWwgdmVyc2lvbj0nMS4wJyBlbmNvZGluZz0ndXRmLTgnPz4KPGFwcGxpY2F0aW9uPgogIDxjb21wb25lbnQgbmFtZT0iRWRpdG9yIj4KICAgIDxvcHRpb24gbmFtZT0idGFicyIgdmFsdWU9IjQiIC8+CiAgICA8b3B0aW9uIG5hbWU9IndyYXAiIHZhbHVlPSJ0cnVlIiAvPgogIDwvY29tcG9uZW50Pgo8L2FwcGxpY2F0aW9uPgo=",
+      "JetBrains/IntelliJIdea2026.2/options/other.xml": "PGFwcGxpY2F0aW9uLz4=",
+      "jbsync/data/.gitattributes": "KiAtdGV4dAo=",
+      "jbsync/data/shared/options/editor.xml": "PD94bWwgdmVyc2lvbj0nMS4wJyBlbmNvZGluZz0ndXRmLTgnPz4KPGFwcGxpY2F0aW9uPgogIDxjb21wb25lbnQgbmFtZT0iRWRpdG9yIj4KICAgIDxvcHRpb24gbmFtZT0idGFicyIgdmFsdWU9IjQiIC8+CiAgICA8b3B0aW9uIG5hbWU9IndyYXAiIHZhbHVlPSJ0cnVlIiAvPgogIDwvY29tcG9uZW50Pgo8L2FwcGxpY2F0aW9uPgo=",
+      "jbsync/base/IntelliJIdea2026.2/options/editor.xml": "PD94bWwgdmVyc2lvbj0nMS4wJyBlbmNvZGluZz0ndXRmLTgnPz4KPGFwcGxpY2F0aW9uPgogIDxjb21wb25lbnQgbmFtZT0iRWRpdG9yIj4KICAgIDxvcHRpb24gbmFtZT0idGFicyIgdmFsdWU9IjQiIC8+CiAgICA8b3B0aW9uIG5hbWU9IndyYXAiIHZhbHVlPSJ0cnVlIiAvPgogIDwvY29tcG9uZW50Pgo8L2FwcGxpY2F0aW9uPgo="
+    }
+  }
+}

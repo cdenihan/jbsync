@@ -1,0 +1,26 @@
+//! jbsync library. Allocations belong to the caller's arena.
+comptime {
+    const target = @import("builtin").target;
+    if (target.os.tag != .macos or target.cpu.arch != .aarch64)
+        @compileError("jbsync supports only Apple Silicon Macs");
+}
+pub const version = @import("build_options").version;
+pub const xml = @import("zig/xml.zig");
+pub const merge = @import("zig/merge.zig");
+pub const config = @import("zig/config.zig");
+pub const files = @import("zig/files.zig");
+pub const settings = @import("zig/settings.zig");
+pub const engine = @import("zig/engine.zig");
+pub const plugins = @import("zig/plugins.zig");
+pub const cli = @import("zig/cli.zig");
+test {
+    _ = files;
+    _ = engine;
+    _ = @import("zig/plugins.zig");
+    _ = @import("zig/git.zig");
+    _ = xml;
+    _ = merge;
+    _ = config;
+    _ = settings;
+    _ = cli;
+}
