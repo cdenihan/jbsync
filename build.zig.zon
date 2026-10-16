@@ -1,0 +1,15 @@
+.{
+    .name = .jbsync,
+    .version = "2026.10.3+2",
+    .fingerprint = 0xf63083d48ef3c1dc, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.17.0",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "VERSION",
+        "LICENSE",
+        "scripts",
+    },
+}

@@ -24,15 +24,131 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  verify-release:
+    name: Verify trusted release inputs
+    runs-on: macos-15
+    outputs:
+      cache-write: ${{ steps.verify.outputs.cache-write }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 0
+      - name: Verify tag, version, commit, and dispatch ref
+        id: verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_COMMIT: ${{ inputs.commit }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]
+          default_branch="$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.default_branch')"
+          [[ "$GITHUB_REF" == "refs/heads/${default_branch}" ]]
+          python3 -c 'import os, re, datetime; m = re.fullmatch(r"([0-9]{4})\.([0-9]{2})\.([0-9]{2})\.([1-9][0-9]*)", os.environ["RELEASE_VERSION"]); assert m; datetime.date(*map(int, m.groups()[:3]))'
+          [[ "$(cat VERSION)" == "$RELEASE_VERSION" ]]
+          [[ "$RELEASE_TAG" == "v${RELEASE_VERSION}" ]]
+          [[ "$RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          tagged_commit="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" --jq '.object.sha')"
+          [[ "$tagged_commit" == "$RELEASE_COMMIT" ]]
+          git fetch origin "$default_branch"
+          git merge-base --is-ancestor "$RELEASE_COMMIT" "origin/${default_branch}"
+          echo 'cache-write=true' >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build Apple Silicon Zig release
+    needs: verify-release
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit }}
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: 0.17.0
+      - name: Build
+        run: |
+          test "$(uname -m)" = arm64
+          zig build test -Dtarget=aarch64-macos -Doptimize=ReleaseSafe
+          zig build -Dtarget=aarch64-macos -Doptimize=ReleaseSafe
+          test "$(lipo -archs zig-out/bin/jbsync)" = arm64
+      - name: Verify compiled release version
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          reported_version="$("zig-out/bin/jbsync" --version)"
+          expected_version="jbsync $RELEASE_VERSION"
+          [[ "$reported_version" == "$expected_version" ]] || {
+            echo "Expected '$expected_version', got '$reported_version'" >&2
+            exit 1
+          }
+      - name: Prepare artifact
+        shell: bash
+        run: |
+          binary="jbsync"
+          artifact="jbsync-macos-aarch64"
+          mkdir -p dist
+          cp "zig-out/bin/${binary}" "dist/${artifact}"
+          (cd dist && openssl dgst -sha256 -r "$artifact" > "$artifact.sha256")
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jbsync-macos-aarch64
+          path: dist/*
+          if-no-files-found: error
+
   publish:
-    uses: cdenihan/rust-cli-toolkit/.github/workflows/publish-release.yml@v2.0.0
-    with:
-      version: ${{ inputs.version }}
-      tag: ${{ inputs.tag }}
-      commit: ${{ inputs.commit }}
-      binary-name: jbsync
-      display-name: jbsync
-      cargo-package: jbsync
-      environment-prefix: JBSYNC
-    secrets:
-      dependency_token: ${{ secrets.RUST_CLI_TOOLKIT_TOKEN }}
+    name: Publish GitHub release
+    needs: build
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit }}
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Package Apple Silicon installer
+        run: cp scripts/install.sh dist/install.sh
+      - name: Add installer checksums
+        shell: bash
+        run: |
+          cp VERSION dist/VERSION
+          chmod 0755 dist/install.sh
+          (cd dist && openssl dgst -sha256 -r VERSION > VERSION.sha256)
+          (cd dist && openssl dgst -sha256 -r install.sh > install.sh.sha256)
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_COMMIT: ${{ inputs.commit }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          tagged_commit="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" --jq '.object.sha')"
+          [[ "$tagged_commit" == "$RELEASE_COMMIT" ]] || {
+            echo "Expected $RELEASE_TAG at $RELEASE_COMMIT, got $tagged_commit" >&2
+            exit 1
+          }
+          gh release create "$RELEASE_TAG" dist/* --verify-tag \
+            --title "jbsync $RELEASE_VERSION" --generate-notes
+
+  cleanup_failed_tag:
+    name: Clean up failed release reservation
+    if: ${{ always() && needs.verify-release.result == 'success' && needs.publish.result != 'success' }}
+    needs: [verify-release, build, publish]
+    runs-on: macos-15
+    steps:
+      - name: Delete this run's unused reserved tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_COMMIT: ${{ inputs.commit }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        shell: bash
+        run: |
+          gh release view "$RELEASE_TAG" >/dev/null 2>&1 && exit 0
+          reserved_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" --jq '.object.sha' 2>/dev/null || true)"
+          [[ "$reserved_sha" != "$RELEASE_COMMIT" ]] ||
+            gh api --method DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/${RELEASE_TAG}"

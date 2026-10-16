@@ -1,20 +1,16 @@
 # Getting started
 
+Requires an Apple Silicon Mac running macOS 15 or newer.
+
 This walks through a first machine, a second machine, and what to do when
 something looks wrong. It assumes nothing about Git.
 
 ## Install
 
-Linux or macOS:
+Apple Silicon macOS (the only supported platform):
 
 ```console
 curl -fsSL https://github.com/cdenihan/jbsync/releases/latest/download/install.sh | sh
-```
-
-Windows PowerShell:
-
-```powershell
-irm https://github.com/cdenihan/jbsync/releases/latest/download/install.ps1 | iex
 ```
 
 Check it landed:
@@ -142,7 +138,7 @@ exclude = ["options/sshConfigs.xml", "options/github.xml"]
 ```
 
 Authentication is whatever already works for you — SSH agent, macOS Keychain,
-Windows Credential Manager, `gh auth`, a hardware key. jbsync runs the `git`
+`gh auth`, a hardware key. jbsync runs the `git`
 you have installed rather than embedding its own client, so there are no
 separate credentials to configure.
 

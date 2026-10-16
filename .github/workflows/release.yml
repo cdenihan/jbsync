@@ -1,27 +1,57 @@
 name: Prepare Release
-
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
-
 permissions:
   actions: write
   contents: write
-
 concurrency:
   group: prepare-release-main
   cancel-in-progress: false
-
 jobs:
   prepare:
-    uses: cdenihan/rust-cli-toolkit/.github/workflows/prepare-release.yml@v2.0.0
-    with:
-      binary-name: jbsync
-      display-name: jbsync
-      cargo-package: jbsync
-      environment-prefix: JBSYNC
-      version-mode: calendar
-      version-file: VERSION
-      publish-workflow: publish-release.yml
-    secrets:
-      dependency_token: ${{ secrets.RUST_CLI_TOOLKIT_TOKEN }}
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: 0.17.0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check that validated main is still current
+        id: current
+        run: |
+          git fetch origin main
+          if [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ]; then
+            echo 'release=true' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Prepare and validate release version
+        if: steps.current.outputs.release == 'true'
+        id: version
+        run: |
+          version=$(python3 scripts/release_version.py --write)
+          sh scripts/check.sh ReleaseSafe
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Reserve version and dispatch publishing
+        if: steps.current.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add VERSION build.zig.zon
+          git commit -m "chore: prepare release $RELEASE_VERSION"
+          tag="v$RELEASE_VERSION"
+          git tag "$tag"
+          git push --atomic origin HEAD:refs/heads/main "refs/tags/$tag"
+          gh workflow run publish-release.yml --ref main \
+            -f "version=$RELEASE_VERSION" -f "tag=$tag" -f "commit=$(git rev-parse HEAD)"

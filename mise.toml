@@ -1,22 +1,18 @@
 [tools]
-rust = "stable"
+zig = "0.17.0"
 
 [tasks.build]
-description = "Build the debug binary"
-run = "cargo build"
+description = "Build the production Apple Silicon binary"
+run = "zig build -Dtarget=aarch64-macos -Doptimize=ReleaseSafe"
 
 [tasks.test]
-description = "Run the test suite"
-run = "cargo test --locked --all-targets"
+description = "Run native tests and disposable CLI scenarios"
+run = ["zig build test", "zig build", "python3 tests/zig/integration.py zig-out/bin/jbsync"]
 
 [tasks.fmt]
-description = "Check formatting"
-run = "cargo fmt --all -- --check"
-
-[tasks.lint]
-description = "Run clippy with warnings denied"
-run = "cargo clippy --locked --all-targets --all-features -- -D warnings"
+description = "Check Zig formatting"
+run = "zig fmt --check build.zig build.zig.zon src"
 
 [tasks.ci]
-description = "Run everything CI runs"
-depends = ["fmt", "lint", "test"]
+description = "Run the full production validation suite"
+run = "sh scripts/check.sh"
