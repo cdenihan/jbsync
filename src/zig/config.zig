@@ -374,7 +374,16 @@ pub const Sync = struct {
         var excludes: std.ArrayList([]const u8) = .empty;
         try excludes.appendSlice(a, try strings(a, jb, "exclude", &.{}));
         try excludes.appendSlice(a, try strings(a, try table(machine, "jetbrains"), "exclude", &.{}));
-        return .{ .ides = try strings(a, jb, "ides", &.{"*20??.*"}), .backups = try boolean(jb, "backups", true), .default_excludes = try boolean(jb, "use_default_excludes", true), .use_defaults = try boolean(x, "use_defaults", true), .plugins = try boolean(p, "enabled", true), .include = try strings(a, jb, "include", &.{}), .exclude = excludes.items, .explicit = try strings(a, jb, "explicit_include", &.{}), .rules = rules.items, .plugin_config = p, .vm_names = try table(jb, "vmoptions_names") };
+        const result: Sync = .{ .ides = try strings(a, jb, "ides", &.{"*20??.*"}), .backups = try boolean(jb, "backups", true), .default_excludes = try boolean(jb, "use_default_excludes", true), .use_defaults = try boolean(x, "use_defaults", true), .plugins = try boolean(p, "enabled", true), .include = try strings(a, jb, "include", &.{}), .exclude = excludes.items, .explicit = try strings(a, jb, "explicit_include", &.{}), .rules = rules.items, .plugin_config = p, .vm_names = try table(jb, "vmoptions_names") };
+        const validate = @import("glob.zig").validate;
+        for ([_][]const []const u8{ result.ides, result.include, result.exclude, result.explicit }) |patterns| for (patterns) |pattern| try validate(pattern);
+        for (result.rules) |rule| try validate(rule.file);
+        for (try array(p, "rule")) |rule| {
+            try validate(try string(rule, "id", "*"));
+            try validate(try string(rule, "ide", "*"));
+        }
+        for (try array(p, "capability")) |rule| try validate(try string(rule, "ide", "*"));
+        return result;
     }
 };
 test "comments, multiline arrays, inline maps and omit tables" {

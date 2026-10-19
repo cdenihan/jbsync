@@ -40,7 +40,7 @@ pub const Engine = struct {
     git: Git,
     ides: []settings.Ide,
     pub fn loadLocal(fs: files.Fs, raw: []const u8, env: *const std.process.Environ.Map, fallback: ?[]const u8) !config.Local {
-        return config.Local.load(fs.allocator, raw, fallback) catch |err| switch (err) {
+        return config.Local.load(fs.allocator, raw, fallback orelse env.get("JBSYNC_MACHINE")) catch |err| switch (err) {
             error.MachineIdNotConfigured => config.Local.load(fs.allocator, raw, try hostname(fs, env)),
             else => return err,
         };
@@ -122,6 +122,8 @@ pub const Engine = struct {
                     hidden = true;
                 };
                 if (hidden or !settings.safeRelative(relative) or std.mem.eql(u8, relative, "plugins.json")) continue;
+                const snapshot = (try self.fs.read(try self.fs.join(&.{ ide.path, "settingsSync", relative }))) orelse continue;
+                if (std.mem.eql(u8, std.mem.trim(u8, snapshot, " \r\n\t"), "DELETED")) continue;
                 if (!contains(learned.items, relative)) {
                     try learned.append(a, relative);
                     observed = true;
@@ -340,9 +342,13 @@ fn contains(list: []const []const u8, text: []const u8) bool {
 // Zig has no portable hostname I/O operation yet. Use the OS hostname utility
 // without a shell, only for identity (Git remains the transport dependency).
 pub fn hostname(fs: files.Fs, env: *const std.process.Environ.Map) ![]const u8 {
-    if (env.get("HOSTNAME")) |name| return name;
+    if (env.get("JBSYNC_MACHINE")) |name| return name;
+    if (env.get("HOSTNAME")) |name| return shortHostname(name);
     const result = try std.process.run(fs.allocator, fs.io, .{ .argv = &.{"hostname"}, .stdout_limit = .limited(4096), .stderr_limit = .limited(4096) });
     const name = std.mem.trim(u8, result.stdout, " \r\n\t");
     if (result.term != .exited or result.term.exited != 0 or name.len == 0) return error.HostnameUnavailable;
-    return name;
+    return shortHostname(name);
+}
+fn shortHostname(name: []const u8) []const u8 {
+    return name[0 .. std.mem.indexOfScalar(u8, name, '.') orelse name.len];
 }

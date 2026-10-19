@@ -48,7 +48,7 @@ pub fn descriptor(a: A, raw: []const u8, fallback: []const u8) !Plugin {
         }
         if (eq(u8, child.name, "dependencies")) {
             for (child.children.items) |dependency| {
-                if (files.equal(dependency.attrs.get("optional"), "true") or files.equal(dependency.attrs.get("loading"), "optional")) continue;
+                if (files.equal(dependency.attrs.get("optional"), "true") or !files.equal(dependency.attrs.get("loading"), "required")) continue;
                 if (dependency.attrs.get("name") orelse dependency.attrs.get("id")) |s| try required.append(a, s);
             }
         }
@@ -92,16 +92,10 @@ fn installedWithBundled(fs: files.Fs, ide: settings.Ide, include_bundled: bool) 
         if (entry.kind != .directory) continue;
         const fallback = try fs.allocator.dupe(u8, entry.name);
         const plugin_dir = try fs.join(&.{ root, fallback });
-        var raw = try fs.read(try fs.join(&.{ plugin_dir, "META-INF/plugin.xml" }));
-        if (raw == null) {
-            for (try fs.list(plugin_dir)) |relative| {
-                if (!std.mem.endsWith(u8, relative, ".jar")) continue;
-                raw = try fromJar(fs, try fs.join(&.{ plugin_dir, relative }));
-                if (raw != null) break;
-            }
-        }
-        const source = raw orelse continue;
-        var p = try descriptor(fs.allocator, source, fallback);
+        var p = readPlugin(fs, plugin_dir, fallback) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            else => continue,
+        } orelse continue;
         if (!include_bundled and bundled_ids.contains(p.id)) continue;
         p.source_products = try fs.allocator.dupe([]const u8, &.{ide.product});
         try result.append(fs.allocator, p);
@@ -112,6 +106,18 @@ fn installedWithBundled(fs: files.Fs, ide: settings.Ide, include_bundled: bool) 
         }
     }.less);
     return result.items;
+}
+fn readPlugin(fs: files.Fs, plugin_dir: []const u8, fallback: []const u8) !?Plugin {
+    var raw = try fs.read(try fs.join(&.{ plugin_dir, "META-INF/plugin.xml" }));
+    if (raw == null) {
+        for (try fs.list(plugin_dir)) |relative| {
+            if (!std.mem.endsWith(u8, relative, ".jar")) continue;
+            raw = try fromJar(fs, try fs.join(&.{ plugin_dir, relative }));
+            if (raw != null) break;
+        }
+    }
+    const source = raw orelse return null;
+    return try descriptor(fs.allocator, source, fallback);
 }
 fn bundled(fs: files.Fs, ide: settings.Ide) !std.StringHashMapUnmanaged(void) {
     var ids: std.StringHashMapUnmanaged(void) = .empty;

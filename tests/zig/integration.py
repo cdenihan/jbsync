@@ -85,6 +85,95 @@ class Integration(unittest.TestCase):
     def machine(self, name='a', **kw):
         return Machine(self.path / name, self.remote, **kw)
 
+    def test_machine_identity_precedence_and_short_hostname(self):
+        m = self.machine(names=('IntelliJIdea2026.2',))
+        cfg = m.app / 'config.toml'
+        raw = cfg.read_text()
+        for explicit, override, expected in [('configured.id', 'override.id', 'configured.id'),
+                                              (None, 'override.id', 'override.id'),
+                                              (None, None, 'work-laptop')]:
+            with self.subTest(expected=expected):
+                cfg.write_text(raw.split('[machine]')[0] +
+                               (f'[machine]\nid="{explicit}"\n' if explicit else ''))
+                env = dict(os.environ, HOSTNAME='work-laptop.local')
+                env.pop('JBSYNC_MACHINE', None)
+                if override is not None:
+                    env['JBSYNC_MACHINE'] = override
+                result = subprocess.run([str(BINARY), '--config-dir', str(m.app), 'init'],
+                                        env=env, text=True, capture_output=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(f'id = "{expected}"', cfg.read_text())
+
+    def test_bad_metadata_does_not_block_display_name_sync(self):
+        m = self.machine(names=('IntelliJIdea2026.2',))
+        for index, raw in enumerate(['{', '[]', json.dumps(dict(dataDirectoryName='bad', modules=42))]):
+            path = m.install / str(index) / 'product-info.json'
+            path.parent.mkdir()
+            path.write_text(raw)
+        (m.install / 'product-info.json').write_text(json.dumps(dict(
+            dataDirectoryName=m.names[0], name='IntelliJ IDEA', buildNumber='262.3')))
+        m.option(m.names[0], tabs='8')
+        m.sync('--ide', 'IntelliJ IDEA')
+        self.assertTrue((m.app / 'data/shared/options/editor.xml').exists())
+
+    def test_bad_plugin_descriptors_and_modern_optional_dependencies(self):
+        m = self.machine(names=('IntelliJIdea2026.2',))
+        for name, raw in [('malformed', '<idea-plugin>'), ('unsupported', '<other/>'),
+                          ('valid', '<idea-plugin><id>valid</id><dependencies>'
+                           '<plugin id="required" loading="required"/>'
+                           '<plugin id="implicit"/><module name="demand" loading="on-demand"/>'
+                           '<plugin id="optional" loading="optional"/>'
+                           '</dependencies></idea-plugin>')]:
+            m.write(m.names[0], f'plugins/{name}/META-INF/plugin.xml', raw)
+        m.write(m.names[0], 'plugins/corrupt/lib/bad.jar', 'invalid ZIP')
+        m.sync()
+        plugins = json.loads((m.app / 'data/plugins.json').read_text())['plugins']
+        self.assertEqual([p['id'] for p in plugins], ['valid'])
+        self.assertEqual(plugins[0]['required_dependencies'], ['required'])
+
+    def test_omit_rule_without_selector_preserves_options(self):
+        m = self.machine(names=('IntelliJIdea2026.2',))
+        m.option(m.names[0], tabs='8')
+        (m.app / 'data').mkdir()
+        (m.app / 'data/sync.toml').write_text(
+            '[[xml.omit]]\nfile="options/editor.xml"\n')
+        m.sync()
+        node = ET.parse(m.app / 'data/shared/options/editor.xml')
+        self.assertEqual(len(node.findall('./component/option')), 2)
+
+    def test_invalid_policy_globs_fail_before_writes(self):
+        m = self.machine(names=('IntelliJIdea2026.2',))
+        m.option(m.names[0])
+        m.sync()
+        for key in ('ides', 'include', 'exclude', 'explicit_include'):
+            for pattern in ('options/{editor.xml', 'options/editor}.xml', 'options/[abc.xml'):
+                with self.subTest(key=key, pattern=pattern):
+                    (m.app / 'data/sync.toml').write_text(
+                        f'[jetbrains]\n{key}=[{json.dumps(pattern)}]\n')
+                    before = m.snapshot()
+                    m.sync(expected=1)
+                    self.assertEqual(before, m.snapshot())
+        (m.app / 'data/sync.toml').write_text('')
+        (m.app / 'data/machines').mkdir(exist_ok=True)
+        (m.app / 'data/machines/a.toml').write_text('[jetbrains]\nexclude=["{bad"]\n')
+        before = m.snapshot()
+        m.sync(expected=1)
+        self.assertEqual(before, m.snapshot())
+
+    def test_tombstones_are_not_learned_or_published(self):
+        m = self.machine(names=('IntelliJIdea2026.2',))
+        for relative, snapshot in [('options/deleted-custom.xml', ' \nDELETED\n'),
+                                   ('options/live-custom.xml', '<application/>')]:
+            m.write(m.names[0], 'settingsSync/' + relative, snapshot)
+            m.write(m.names[0], relative,
+                    '<application><component name="Custom"><option name="x" value="1"/></component></application>')
+        m.sync()
+        manifest = (m.app / 'data/manifest.toml').read_text()
+        self.assertNotIn('deleted-custom.xml', manifest)
+        self.assertIn('live-custom.xml', manifest)
+        self.assertFalse((m.app / 'data/shared/options/deleted-custom.xml').exists())
+        self.assertTrue((m.app / 'data/shared/options/live-custom.xml').exists())
+
     def test_two_ides_disjoint_edits_converge_and_back_up(self):
         m = self.machine()
         for name in m.names:

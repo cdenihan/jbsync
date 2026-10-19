@@ -119,7 +119,7 @@ pub const Ide = struct {
     metadata: Metadata = .{},
     pub fn selected(self: Ide, only: []const []const u8) bool {
         if (only.len == 0) return true;
-        for (only) |s| if (glob(s, self.name) or glob(s, self.product) or eq(u8, s, self.path)) return true;
+        for (only) |s| if (glob(s, self.name) or glob(s, self.product) or glob(s, self.metadata.name) or eq(u8, s, self.path)) return true;
         return false;
     }
 };
@@ -148,24 +148,12 @@ pub fn discover(fs: files.Fs, root: []const u8, patterns: []const []const u8, in
         for (candidates) |candidate| {
             if (candidate.len != 0 and !std.mem.endsWith(u8, candidate, "product-info.json")) continue;
             const path = if (candidate.len == 0) installation else try fs.join(&.{ installation, candidate });
-            const raw = try fs.read(path) orelse continue;
-            const parsed = try std.json.parseFromSlice(std.json.Value, fs.allocator, raw, .{ .allocate = .alloc_always });
-            const info = parsed.value;
-            if (info != .object) return error.InvalidProductInfo;
-            const name = jsonString(info, "dataDirectoryName") orelse continue;
-            var m: Metadata = .{ .name = jsonString(info, "name") orelse name, .build = jsonString(info, "buildNumber") orelse "" };
-            m.modules = try jsonStrings(fs.allocator, info, "modules");
-            m.bundled_plugins = try jsonStrings(fs.allocator, info, "bundledPlugins");
-            if (info.object.get("launch")) |launches| {
-                if (launches == .array) for (launches.array.items) |launch| {
-                    const tag = jsonString(launch, "os") orelse osTag();
-                    if (!eq(u8, tag, osTag())) continue;
-                    if (jsonString(launch, "arch")) |arch| if (!eq(u8, arch, "aarch64") and !eq(u8, arch, "arm64")) continue;
-                    if (jsonString(launch, "launcherPath")) |s| m.launcher = try fs.join(&.{ std.fs.path.dirname(path) orelse ".", s });
-                    if (jsonString(launch, "vmOptionsFilePath")) |s| m.vm_options = std.fs.path.basename(s);
-                    break;
-                };
-            }
+            const candidate_info = readMetadata(fs, path) catch |err| switch (err) {
+                error.OutOfMemory => return err,
+                else => continue,
+            } orelse continue;
+            const name = candidate_info.name;
+            const m = candidate_info.metadata;
             if (metadata.get(name)) |previous| {
                 if (!newer(m.build, previous.build)) continue;
             }
@@ -186,6 +174,27 @@ pub fn discover(fs: files.Fs, root: []const u8, patterns: []const []const u8, in
     }
     sortIdes(result.items, patterns);
     return result.toOwnedSlice(fs.allocator);
+}
+fn readMetadata(fs: files.Fs, path: []const u8) !?struct { name: []const u8, metadata: Metadata } {
+    const raw = try fs.read(path) orelse return null;
+    const parsed = try std.json.parseFromSlice(std.json.Value, fs.allocator, raw, .{ .allocate = .alloc_always });
+    const info = parsed.value;
+    if (info != .object) return error.InvalidProductInfo;
+    const name = jsonString(info, "dataDirectoryName") orelse return null;
+    var m: Metadata = .{ .name = jsonString(info, "name") orelse name, .build = jsonString(info, "buildNumber") orelse "" };
+    m.modules = try jsonStrings(fs.allocator, info, "modules");
+    m.bundled_plugins = try jsonStrings(fs.allocator, info, "bundledPlugins");
+    if (info.object.get("launch")) |launches| {
+        if (launches == .array) for (launches.array.items) |launch| {
+            const tag = jsonString(launch, "os") orelse osTag();
+            if (!eq(u8, tag, osTag())) continue;
+            if (jsonString(launch, "arch")) |arch| if (!eq(u8, arch, "aarch64") and !eq(u8, arch, "arm64")) continue;
+            if (jsonString(launch, "launcherPath")) |s| m.launcher = try fs.join(&.{ std.fs.path.dirname(path) orelse ".", s });
+            if (jsonString(launch, "vmOptionsFilePath")) |s| m.vm_options = std.fs.path.basename(s);
+            break;
+        };
+    }
+    return .{ .name = name, .metadata = m };
 }
 pub fn sortIdes(ides: []Ide, patterns: []const []const u8) void {
     std.mem.sort(Ide, ides, patterns, struct {
@@ -303,6 +312,7 @@ fn prune(relative: []const u8, n: *xml.Node, inherited_scope: ?[]const u8, c: co
             if (eq(u8, relative, "options/other.xml") and files.equal(scope, "LangManager") and eq(u8, child.name, "entry") and attr(child, "key", "JAVA")) drop = true;
         }
         for (c.rules) |rule| {
+            if (rule.option == null and rule.attribute == null) continue;
             if (!glob(rule.file, relative) or !eq(u8, rule.element, child.name)) continue;
             if (rule.component != null and !files.equal(rule.component, scope)) continue;
             if (rule.option) |option| {

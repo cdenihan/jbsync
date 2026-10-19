@@ -10,7 +10,7 @@ sh scripts/check.sh Debug
 sh scripts/check.sh ReleaseFast
 ```
 
-Every mode runs native tests, 32 real CLI/Git scenarios, 2,688 deterministic
+Every mode runs native tests, 38 real CLI/Git scenarios, 2,688 deterministic
 regression cases, legacy store migration, installer and self-update tests,
 release version tests, and platform rejection checks. Fixtures use temporary
 IDE roots and local bare Git remotes. Plugin tests use a mock launcher.
