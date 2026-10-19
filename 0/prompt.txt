@@ -1,0 +1,1 @@
+Please git pull, then on main address the feedback here: [https://github.com/cdenihan/jbsync/pull/8#pullrequestreview-5403405543](https://github.com/cdenihan/jbsync/pull/8#pullrequestreview-5403405543). Don't wait for CI to finished, just build locally and commit and push. Then stop. You will run out of usage if you wait for CI
